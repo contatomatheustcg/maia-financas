@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   PieChart,
   Pie,
@@ -12,6 +12,11 @@ import {
   Mail, Lock, LogOut, Shield, Calendar, RefreshCw, ArrowUpRight, ArrowDownRight, Save, Sparkles,
   Check, SkipForward, CalendarClock,
 } from "lucide-react";
+import { supabase } from "./lib/supabaseClient";
+import {
+  fetchAllData, insertEntry, updateEntry, patchEntry, deleteEntry,
+  insertCategory, upsertSettings, describeSupabaseError,
+} from "./lib/db";
 
 /* ---------------------------------------------------------------------- */
 /*  Tokens — inspired by the reference dashboard (navy header + white UI)  */
@@ -92,7 +97,6 @@ const MONTHS = [
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const brl = (cents) => (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const todayShort = () => "12/07";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const formatDateShort = (iso) => {
   if (!iso) return null;
@@ -100,6 +104,7 @@ const formatDateShort = (iso) => {
   if (parts.length !== 3) return null;
   return `${parts[2]}/${parts[1]}`;
 };
+const todayShort = () => formatDateShort(todayISO());
 
 function daysUntilDue(dueDay) {
   if (!dueDay) return null;
@@ -199,19 +204,29 @@ function StatCard({ icon, iconBg, iconColor, label, value, hide, footer }) {
 /* ---------------------------------------------------------------------- */
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [session, setSession] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const settingsHydratedRef = useRef(false);
+
+  const user = session?.user || null;
+  const isAuthenticated = !!session;
+  const userName = user?.user_metadata?.name || (user?.email ? user.email.split("@")[0] : "");
+
   const [authView, setAuthView] = useState("login");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [userName, setUserName] = useState("");
   const [signupName, setSignupName] = useState("");
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
   const [signupError, setSignupError] = useState("");
   const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [signupConfirmationSent, setSignupConfirmationSent] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotError, setForgotError] = useState("");
   const [forgotSubmitted, setForgotSubmitted] = useState(false);
@@ -254,6 +269,75 @@ export default function App() {
   const [formInstallmentTotal, setFormInstallmentTotal] = useState("2");
   const [formDueDay, setFormDueDay] = useState("");
   const [formPaymentDate, setFormPaymentDate] = useState("");
+
+  /* -------------------------- auth session -------------------------- */
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setSession(data.session);
+      setAuthChecking(false);
+    });
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => {
+      mounted = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
+
+  /* -------------------------- load / reset finance data -------------------------- */
+
+  useEffect(() => {
+    if (!user) {
+      setIncome([]);
+      setFixedExpenses([]);
+      setVariableExpenses([]);
+      setInvestAllocations([]);
+      setVariableCategories(DEFAULT_VARIABLE_CATEGORIES);
+      setFixedCategories(DEFAULT_FIXED_CATEGORIES);
+      setInvestPercent(0);
+      setCategoryBudgets({});
+      settingsHydratedRef.current = false;
+      return;
+    }
+    let cancelled = false;
+    setDataLoading(true);
+    fetchAllData(user.id)
+      .then((d) => {
+        if (cancelled) return;
+        setIncome(d.income);
+        setFixedExpenses(d.fixedExpenses);
+        setVariableExpenses(d.variableExpenses);
+        setInvestAllocations(d.investAllocations);
+        setVariableCategories([...DEFAULT_VARIABLE_CATEGORIES, ...d.variableCategories]);
+        setFixedCategories([...DEFAULT_FIXED_CATEGORIES, ...d.fixedCategories]);
+        setInvestPercent(d.settings.investPercent);
+        setCategoryBudgets(d.settings.categoryBudgets);
+        settingsHydratedRef.current = true;
+      })
+      .catch((e) => console.error("Falha ao carregar dados do Supabase:", e))
+      .finally(() => {
+        if (!cancelled) setDataLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  /* -------------------------- persist settings (debounced) -------------------------- */
+
+  useEffect(() => {
+    if (!user || !settingsHydratedRef.current) return;
+    const handle = setTimeout(() => {
+      upsertSettings(user.id, { investPercent, categoryBudgets }).catch((e) =>
+        console.error("Falha ao salvar configurações:", e)
+      );
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [investPercent, categoryBudgets, user?.id]);
 
   /* -------------------------- derived totals -------------------------- */
 
@@ -435,7 +519,22 @@ export default function App() {
 
   function closeAddModal() { setAddModalOpen(false); }
 
-  function handleSave() {
+  function applyLocalInsert(kind, saved) {
+    if (kind === "receita") setIncome((prev) => [...prev, saved]);
+    else if (kind === "fixa") setFixedExpenses((prev) => [...prev, saved]);
+    else if (kind === "investimento") setInvestAllocations((prev) => [...prev, saved]);
+    else setVariableExpenses((prev) => [...prev, saved]);
+  }
+
+  function applyLocalUpdate(kind, saved) {
+    const updater = (prev) => prev.map((i) => (i.id === saved.id ? saved : i));
+    if (kind === "receita") setIncome(updater);
+    else if (kind === "fixa") setFixedExpenses(updater);
+    else if (kind === "investimento") setInvestAllocations(updater);
+    else setVariableExpenses(updater);
+  }
+
+  async function handleSave() {
     if (!formName.trim()) {
       setFormError("Digite uma descrição.");
       return;
@@ -448,22 +547,22 @@ export default function App() {
     const existingEntry = editingId
       ? (income.find((i) => i.id === editingId) || fixedExpenses.find((i) => i.id === editingId) || variableExpenses.find((i) => i.id === editingId) || investAllocations.find((i) => i.id === editingId) || {})
       : {};
-    const entry = { id: editingId || uid(), name: formName.trim(), amountCents: formAmountCents, date: existingEntry.date || todayShort() };
+    const entry = { name: formName.trim(), amountCents: formAmountCents, date: existingEntry.date || todayShort() };
+    let payload;
     if (addModalType === "receita") {
-      const withCat = {
+      payload = {
         ...entry,
         category: formCategory,
         receiptDate: formPaymentDate || null,
         received: editingId ? existingEntry.received || false : false,
       };
-      setIncome((prev) => (editingId ? prev.map((i) => (i.id === editingId ? withCat : i)) : [...prev, withCat]));
     } else if (addModalType === "fixa") {
       const installment = formRecurrenceType === "parcelado"
         ? { current: Math.max(1, parseInt(formInstallmentCurrent, 10) || 1), total: Math.max(1, parseInt(formInstallmentTotal, 10) || 1) }
         : null;
       const subscription = formRecurrenceType === "assinatura";
       const dueDay = formDueDay ? Math.min(31, Math.max(1, parseInt(formDueDay, 10) || 0)) || null : null;
-      const withExtras = {
+      payload = {
         ...entry,
         category: formCategory,
         installment,
@@ -474,61 +573,102 @@ export default function App() {
         deferred: editingId ? existingEntry.deferred || false : false,
         lateFromPreviousMonth: editingId ? existingEntry.lateFromPreviousMonth || false : false,
       };
-      setFixedExpenses((prev) => (editingId ? prev.map((i) => (i.id === editingId ? withExtras : i)) : [...prev, withExtras]));
     } else if (addModalType === "investimento") {
-      const withCat = { ...entry, category: formCategory };
-      setInvestAllocations((prev) => (editingId ? prev.map((i) => (i.id === editingId ? withCat : i)) : [...prev, withCat]));
+      payload = { ...entry, category: formCategory };
     } else {
-      const withCat = {
+      payload = {
         ...entry,
         category: formCategory,
         paymentDate: formPaymentDate || null,
         paid: editingId ? (formPaymentDate ? true : existingEntry.paid || false) : !!formPaymentDate,
         deferred: editingId ? existingEntry.deferred || false : false,
       };
-      setVariableExpenses((prev) => (editingId ? prev.map((i) => (i.id === editingId ? withCat : i)) : [...prev, withCat]));
     }
-    setAddModalOpen(false);
+
+    setSaving(true);
+    try {
+      if (editingId) {
+        const saved = await updateEntry(addModalType, editingId, payload);
+        applyLocalUpdate(addModalType, saved);
+      } else {
+        const saved = await insertEntry(addModalType, payload, user.id);
+        applyLocalInsert(addModalType, saved);
+      }
+      setAddModalOpen(false);
+    } catch (e) {
+      setFormError(describeSupabaseError(e));
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!editingId) return;
-    if (addModalType === "receita") setIncome((prev) => prev.filter((i) => i.id !== editingId));
-    else if (addModalType === "fixa") setFixedExpenses((prev) => prev.filter((i) => i.id !== editingId));
-    else if (addModalType === "investimento") setInvestAllocations((prev) => prev.filter((i) => i.id !== editingId));
-    else setVariableExpenses((prev) => prev.filter((i) => i.id !== editingId));
-    setAddModalOpen(false);
+    setSaving(true);
+    try {
+      await deleteEntry(addModalType, editingId);
+      const remover = (prev) => prev.filter((i) => i.id !== editingId);
+      if (addModalType === "receita") setIncome(remover);
+      else if (addModalType === "fixa") setFixedExpenses(remover);
+      else if (addModalType === "investimento") setInvestAllocations(remover);
+      else setVariableExpenses(remover);
+      setAddModalOpen(false);
+    } catch (e) {
+      setFormError(describeSupabaseError(e));
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function togglePaid(kind, id) {
-    const updater = (prev) =>
-      prev.map((i) => (i.id === id ? { ...i, paid: !i.paid, paymentDate: !i.paid ? todayISO() : i.paymentDate } : i));
-    if (kind === "fixa") setFixedExpenses(updater);
-    else if (kind === "variavel") setVariableExpenses(updater);
+  async function togglePaid(kind, id) {
+    const list = kind === "fixa" ? fixedExpenses : variableExpenses;
+    const current = list.find((i) => i.id === id);
+    if (!current) return;
+    const nextPaid = !current.paid;
+    const nextPaymentDate = nextPaid ? todayISO() : current.paymentDate;
+    try {
+      const saved = await patchEntry(kind, id, { paid: nextPaid, payment_date: nextPaymentDate });
+      const updater = (prev) => prev.map((i) => (i.id === id ? saved : i));
+      if (kind === "fixa") setFixedExpenses(updater);
+      else setVariableExpenses(updater);
+    } catch (e) {
+      console.error("Falha ao atualizar pagamento:", e);
+    }
   }
 
-  function toggleReceived(id) {
-    setIncome((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, received: !i.received, receiptDate: !i.received ? todayISO() : i.receiptDate } : i))
-    );
+  async function toggleReceived(id) {
+    const current = income.find((i) => i.id === id);
+    if (!current) return;
+    const nextReceived = !current.received;
+    const nextReceiptDate = nextReceived ? todayISO() : current.receiptDate;
+    try {
+      const saved = await patchEntry("receita", id, { received: nextReceived, receipt_date: nextReceiptDate });
+      setIncome((prev) => prev.map((i) => (i.id === id ? saved : i)));
+    } catch (e) {
+      console.error("Falha ao atualizar recebimento:", e);
+    }
   }
 
-  function deferToNextMonth(kind, entry) {
-    if (kind === "fixa") {
-      setFixedExpenses((prev) => {
-        const updated = prev.map((i) => (i.id === entry.id ? { ...i, deferred: true } : i));
-        const duplicate = {
+  async function deferToNextMonth(kind, entry) {
+    try {
+      if (kind === "fixa") {
+        const updatedCurrent = await patchEntry("fixa", entry.id, { deferred: true });
+        const duplicatePayload = {
           ...entry,
-          id: uid(),
           deferred: false,
           paid: false,
           paymentDate: null,
           lateFromPreviousMonth: true,
         };
-        return [...updated, duplicate];
-      });
-    } else if (kind === "variavel") {
-      setVariableExpenses((prev) => prev.map((i) => (i.id === entry.id ? { ...i, deferred: true } : i)));
+        delete duplicatePayload.id;
+        const inserted = await insertEntry("fixa", duplicatePayload, user.id);
+        setFixedExpenses((prev) => [...prev.map((i) => (i.id === entry.id ? updatedCurrent : i)), inserted]);
+      } else if (kind === "variavel") {
+        const updated = await patchEntry("variavel", entry.id, { deferred: true });
+        setVariableExpenses((prev) => prev.map((i) => (i.id === entry.id ? updated : i)));
+      }
+    } catch (e) {
+      console.error("Falha ao adiar lançamento:", e);
     }
   }
 
@@ -539,33 +679,47 @@ export default function App() {
     setCategoryModalOpen(true);
   }
 
-  function saveNewCategory() {
+  async function saveNewCategory() {
     const label = newCategoryName.trim();
     if (!label) return;
     const newCat = { id: `custom_${uid()}`, label, color: newCategoryColor };
-    if (categoryModalTarget === "fixa") {
-      setFixedCategories((prev) => [...prev, newCat]);
-    } else {
-      setVariableCategories((prev) => [...prev, newCat]);
+    try {
+      await insertCategory(categoryModalTarget, newCat, user.id);
+      if (categoryModalTarget === "fixa") {
+        setFixedCategories((prev) => [...prev, newCat]);
+      } else {
+        setVariableCategories((prev) => [...prev, newCat]);
+      }
+      setFormCategory(newCat.id);
+      setCategoryModalOpen(false);
+    } catch (e) {
+      console.error("Falha ao criar categoria:", e);
     }
-    setFormCategory(newCat.id);
-    setCategoryModalOpen(false);
   }
 
   function openInvestModal() { setTempInvestPercent(investPercent); setInvestModalOpen(true); }
   function saveInvest() { setInvestPercent(tempInvestPercent); setInvestModalOpen(false); }
 
-  function handleLogin() {
+  async function handleLogin() {
     if (!loginEmail.trim() || !loginPassword.trim()) {
       setLoginError("Preencha e-mail e senha para continuar.");
       return;
     }
     setLoginError("");
-    setIsAuthenticated(true);
+    setAuthBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: loginEmail.trim(),
+      password: loginPassword,
+    });
+    setAuthBusy(false);
+    if (error) {
+      setLoginError(describeSupabaseError(error));
+      return;
+    }
     setSection("overview");
   }
 
-  function handleSignup() {
+  async function handleSignup() {
     if (!signupName.trim() || !signupEmail.trim() || !signupPassword.trim()) {
       setSignupError("Preencha todos os campos.");
       return;
@@ -579,8 +733,21 @@ export default function App() {
       return;
     }
     setSignupError("");
-    setUserName(signupName.trim());
-    setIsAuthenticated(true);
+    setAuthBusy(true);
+    const { data, error } = await supabase.auth.signUp({
+      email: signupEmail.trim(),
+      password: signupPassword,
+      options: { data: { name: signupName.trim() } },
+    });
+    setAuthBusy(false);
+    if (error) {
+      setSignupError(describeSupabaseError(error));
+      return;
+    }
+    if (!data.session) {
+      setSignupConfirmationSent(true);
+      return;
+    }
     setSection("overview");
   }
 
@@ -588,11 +755,12 @@ export default function App() {
     setAuthView(view);
     setLoginError("");
     setSignupError("");
+    setSignupConfirmationSent(false);
     setForgotError("");
     setForgotSubmitted(false);
   }
 
-  function handleForgotPassword() {
+  async function handleForgotPassword() {
     if (!forgotEmail.trim()) {
       setForgotError("Digite seu e-mail.");
       return;
@@ -602,11 +770,18 @@ export default function App() {
       return;
     }
     setForgotError("");
+    setAuthBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim());
+    setAuthBusy(false);
+    if (error) {
+      setForgotError(describeSupabaseError(error));
+      return;
+    }
     setForgotSubmitted(true);
   }
 
-  function handleLogout() {
-    setIsAuthenticated(false);
+  async function handleLogout() {
+    await supabase.auth.signOut();
     setLoginPassword("");
     setLoginError("");
     setAuthView("login");
@@ -631,8 +806,13 @@ export default function App() {
     [income]
   );
 
-  function confirmReceived(id) {
-    setIncome((prev) => prev.map((i) => (i.id === id ? { ...i, received: true } : i)));
+  async function confirmReceived(id) {
+    try {
+      const saved = await patchEntry("receita", id, { received: true });
+      setIncome((prev) => prev.map((i) => (i.id === id ? saved : i)));
+    } catch (e) {
+      console.error("Falha ao confirmar recebimento:", e);
+    }
   }
 
   const openTableRows = isOverview
@@ -767,6 +947,14 @@ export default function App() {
 
   /* ---------------------------------------------------------------------- */
 
+  if (authChecking) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${COLORS.navy1}, ${COLORS.navy2})`, fontFamily: "'Inter', sans-serif" }}>
+        <span className="text-sm font-medium" style={{ color: "rgba(255,255,255,0.6)" }}>Carregando...</span>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center relative overflow-hidden p-4" style={{ background: `linear-gradient(135deg, ${COLORS.navy1}, ${COLORS.navy2})`, fontFamily: "'Inter', sans-serif" }}>
@@ -847,10 +1035,11 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleLogin}
-                  className="w-full text-sm font-semibold py-3 rounded-xl mt-2"
+                  disabled={authBusy}
+                  className="w-full text-sm font-semibold py-3 rounded-xl mt-2 disabled:opacity-60"
                   style={{ background: COLORS.primary, color: "#fff" }}
                 >
-                  Entrar
+                  {authBusy ? "Entrando..." : "Entrar"}
                 </button>
               </div>
 
@@ -864,6 +1053,26 @@ export default function App() {
           )}
 
           {authView === "signup" && (
+            <>
+            {signupConfirmationSent ? (
+              <>
+                <div className="w-12 h-12 rounded-full flex items-center justify-center mb-4" style={{ background: COLORS.incomeSoft }}>
+                  <Mail size={22} color={COLORS.income} />
+                </div>
+                <h1 className="text-xl font-bold mb-1" style={{ color: COLORS.ink900 }}>Confirme seu e-mail</h1>
+                <p className="text-xs mb-6" style={{ color: COLORS.ink600 }}>
+                  Enviamos um link de confirmação para <span className="font-semibold" style={{ color: COLORS.ink900 }}>{signupEmail}</span>. Confirme para poder entrar.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => switchAuthView("login")}
+                  className="w-full text-sm font-semibold py-3 rounded-xl"
+                  style={{ background: COLORS.primary, color: "#fff" }}
+                >
+                  Voltar para o login
+                </button>
+              </>
+            ) : (
             <>
               <h1 className="text-xl font-bold mb-1" style={{ color: COLORS.ink900 }}>Criar conta</h1>
               <p className="text-xs mb-6" style={{ color: COLORS.ink600 }}>Leva menos de um minuto.</p>
@@ -930,10 +1139,11 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleSignup}
-                  className="w-full text-sm font-semibold py-3 rounded-xl mt-2"
+                  disabled={authBusy}
+                  className="w-full text-sm font-semibold py-3 rounded-xl mt-2 disabled:opacity-60"
                   style={{ background: COLORS.primary, color: "#fff" }}
                 >
-                  Criar conta
+                  {authBusy ? "Criando..." : "Criar conta"}
                 </button>
               </div>
 
@@ -943,6 +1153,8 @@ export default function App() {
                   Entrar
                 </button>
               </p>
+            </>
+            )}
             </>
           )}
 
@@ -979,10 +1191,11 @@ export default function App() {
                     <button
                       type="button"
                       onClick={handleForgotPassword}
-                      className="w-full text-sm font-semibold py-3 rounded-xl mt-2"
+                      disabled={authBusy}
+                      className="w-full text-sm font-semibold py-3 rounded-xl mt-2 disabled:opacity-60"
                       style={{ background: COLORS.primary, color: "#fff" }}
                     >
-                      Enviar link de recuperação
+                      {authBusy ? "Enviando..." : "Enviar link de recuperação"}
                     </button>
                   </div>
                 </>
@@ -1075,7 +1288,6 @@ export default function App() {
                   {hideAmounts ? <EyeOff size={16} color="rgba(255,255,255,0.7)" /> : <Eye size={16} color="rgba(255,255,255,0.7)" />}
                 </button>
                 <Bell size={16} color="rgba(255,255,255,0.7)" />
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: COLORS.primary, color: "#fff" }}>{(userName || "V").charAt(0).toUpperCase()}</div>
                 <button onClick={handleLogout} aria-label="Sair">
                   <LogOut size={16} color="rgba(255,255,255,0.7)" />
                 </button>
@@ -1094,6 +1306,9 @@ export default function App() {
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: healthStatus.color }} />
                     {healthStatus.label}
                   </span>
+                  {dataLoading && (
+                    <span className="text-[10px] font-medium" style={{ color: "rgba(255,255,255,0.4)" }}>Sincronizando...</span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{ background: "rgba(255,255,255,0.08)" }}>
@@ -1940,13 +2155,13 @@ export default function App() {
         )}
         <div className="flex gap-2">
           {editingId && (
-            <button onClick={handleDelete} className="p-2.5 rounded-xl" style={{ background: COLORS.expenseSoft }} aria-label="Excluir">
+            <button onClick={handleDelete} disabled={saving} className="p-2.5 rounded-xl disabled:opacity-60" style={{ background: COLORS.expenseSoft }} aria-label="Excluir">
               <Trash2 size={18} style={{ color: COLORS.expense }} />
             </button>
           )}
-          <button onClick={closeAddModal} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.page, color: COLORS.ink600 }}>Cancelar</button>
-          <button onClick={handleSave} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.ink900, color: "#fff" }}>
-            {editingId ? "Salvar" : "Adicionar"}
+          <button onClick={closeAddModal} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-medium disabled:opacity-60" style={{ background: COLORS.page, color: COLORS.ink600 }}>Cancelar</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-medium disabled:opacity-60" style={{ background: COLORS.ink900, color: "#fff" }}>
+            {saving ? "Salvando..." : editingId ? "Salvar" : "Adicionar"}
           </button>
         </div>
       </Modal>
