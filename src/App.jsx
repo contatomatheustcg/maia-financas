@@ -294,6 +294,7 @@ export default function App() {
   const [formInstallmentTotal, setFormInstallmentTotal] = useState("2");
   const [formDueDay, setFormDueDay] = useState("");
   const [formPaymentDate, setFormPaymentDate] = useState("");
+  const [formPaidStatus, setFormPaidStatus] = useState("aberto");
 
   /* -------------------------- auth session -------------------------- */
 
@@ -568,8 +569,10 @@ export default function App() {
         setFormInstallmentTotal(rawExisting.installment ? String(rawExisting.installment.total) : "2");
         setFormDueDay(rawExisting.dueDay ? String(rawExisting.dueDay) : "");
         setFormPaymentDate("");
+        setFormPaidStatus("aberto");
       } else if (type === "variavel") {
         setFormPaymentDate(existing.paymentDate || "");
+        setFormPaidStatus(existing.paid ? "pago" : "aberto");
       } else if (type === "receita") {
         setFormPaymentDate(existing.receiptDate || "");
       }
@@ -579,6 +582,7 @@ export default function App() {
       setFormAmountCents(0);
       setFormCategory(defaultCategory);
       setFormPaymentDate("");
+      setFormPaidStatus("aberto");
       if (type === "fixa") {
         setFormRecurrenceType("fixo");
         setFormInstallmentCurrent("1");
@@ -640,7 +644,7 @@ export default function App() {
       const startMonth = editingId ? existingEntry.startMonth || currentMonthKey : currentMonthKey;
       const paidMonths = editingId
         ? existingEntry.paidMonths || {}
-        : (formPaymentDate ? { [startMonth]: { paid: true, paymentDate: formPaymentDate } } : {});
+        : (formPaidStatus === "pago" ? { [startMonth]: { paid: true, paymentDate: formPaymentDate || todayISO() } } : {});
       payload = {
         ...entry,
         category: formCategory,
@@ -653,11 +657,12 @@ export default function App() {
     } else if (addModalType === "investimento") {
       payload = { ...entry, category: formCategory };
     } else {
+      const paid = formPaidStatus === "pago";
       payload = {
         ...entry,
         category: formCategory,
-        paymentDate: formPaymentDate || null,
-        paid: editingId ? (formPaymentDate ? true : existingEntry.paid || false) : !!formPaymentDate,
+        paymentDate: formPaymentDate || (paid ? todayISO() : null),
+        paid,
         deferred: editingId ? existingEntry.deferred || false : false,
         referenceMonth: editingId ? existingEntry.referenceMonth || currentMonthKey : currentMonthKey,
       };
@@ -1025,7 +1030,7 @@ export default function App() {
                   Recebido
                 </button>
               )}
-              {showActions && kind === "variavel" && !r.deferred && (
+              {showActions && kind === "variavel" && !r.deferred && !r.paid && (
                 <button
                   onClick={() => deferToNextMonth(kind, r)}
                   aria-label="Lançar para o mês seguinte"
@@ -2103,6 +2108,23 @@ export default function App() {
                 className="w-full rounded-xl px-3 py-2.5 outline-none text-base"
                 style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}`, color: COLORS.ink900 }}
               />
+            </div>
+          )}
+          {(addModalType === "variavel" || (addModalType === "fixa" && !editingId)) && (
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Status</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[{ id: "aberto", label: "Em aberto" }, { id: "pago", label: "Pago" }].map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setFormPaidStatus(s.id)}
+                    className="text-xs font-medium py-2 rounded-xl"
+                    style={formPaidStatus === s.id ? { background: COLORS.ink900, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {addModalType === "receita" && (
