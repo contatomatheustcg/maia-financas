@@ -838,8 +838,8 @@ export default function App() {
 
   function setInvestAmountFromInput(cents) {
     setTempInvestAmountCents(cents);
-    // 2 casas decimais no percentual pra acertar o valor digitado em reais, não só o inteiro mais próximo
-    const pct = totalIncome > 0 ? Math.round((cents / totalIncome) * 100 * 100) / 100 : 0;
+    // 6 casas decimais no percentual pra sobra de arredondamento ficar bem abaixo de 1 centavo
+    const pct = totalIncome > 0 ? Math.round((cents / totalIncome) * 100 * 1e6) / 1e6 : 0;
     setTempInvestPercent(Math.min(100, Math.max(0, pct)));
   }
 
