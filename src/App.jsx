@@ -91,13 +91,12 @@ const INCOME_CATEGORY_PALETTE = [
   { id: "extra", label: "Extra", color: "#E0A23C" },
 ];
 
-const MONTHS = [
-  "Maio de 2026", "Junho de 2026", "Julho de 2026", "Agosto de 2026", "Setembro de 2026", "Outubro de 2026",
-];
-
 const uid = () => Math.random().toString(36).slice(2, 10);
 const brl = (cents) => (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const formatDateShort = (iso) => {
   if (!iso) return null;
   const parts = iso.split("-");
@@ -105,6 +104,28 @@ const formatDateShort = (iso) => {
   return `${parts[2]}/${parts[1]}`;
 };
 const todayShort = () => formatDateShort(todayISO());
+
+/* -------------------------- month navigation (real calendar months) -------------------------- */
+
+function monthKeyFromOffset(offset) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthLabelFromOffset(offset) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offset);
+  const label = d.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+function monthsBetween(fromKey, toKey) {
+  if (!fromKey || !toKey) return 0;
+  const [fy, fm] = fromKey.split("-").map(Number);
+  const [ty, tm] = toKey.split("-").map(Number);
+  return (ty - fy) * 12 + (tm - fm);
+}
 
 function daysUntilDue(dueDay) {
   if (!dueDay) return null;
@@ -234,7 +255,9 @@ export default function App() {
   const [section, setSection] = useState("overview");
   const [budgetTab, setBudgetTab] = useState("variavel");
   const [hideAmounts, setHideAmounts] = useState(false);
-  const [monthIndex, setMonthIndex] = useState(3);
+  const [monthOffset, setMonthOffset] = useState(0);
+  const currentMonthKey = monthKeyFromOffset(monthOffset);
+  const currentMonthLabel = monthLabelFromOffset(monthOffset);
   const [search, setSearch] = useState("");
 
   const [income, setIncome] = useState([]);
@@ -341,9 +364,34 @@ export default function App() {
 
   /* -------------------------- derived totals -------------------------- */
 
-  const totalIncome = useMemo(() => income.reduce((s, i) => s + i.amountCents, 0), [income]);
-  const totalFixed = useMemo(() => fixedExpenses.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [fixedExpenses]);
-  const totalVariable = useMemo(() => variableExpenses.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [variableExpenses]);
+  const monthIncome = useMemo(
+    () => income.filter((i) => i.referenceMonth === currentMonthKey),
+    [income, currentMonthKey]
+  );
+  const monthVariableExpenses = useMemo(
+    () => variableExpenses.filter((e) => e.referenceMonth === currentMonthKey),
+    [variableExpenses, currentMonthKey]
+  );
+  const activeFixedForMonth = useMemo(() => {
+    return fixedExpenses
+      .map((def) => {
+        const offset = monthsBetween(def.startMonth, currentMonthKey);
+        if (offset < 0) return null;
+        let installment = def.installment;
+        if (installment) {
+          const effectiveCurrent = installment.current + offset;
+          if (effectiveCurrent > installment.total) return null;
+          installment = { current: effectiveCurrent, total: installment.total };
+        }
+        const status = def.paidMonths?.[currentMonthKey] || {};
+        return { ...def, installment, paid: !!status.paid, paymentDate: status.paymentDate || null };
+      })
+      .filter(Boolean);
+  }, [fixedExpenses, currentMonthKey]);
+
+  const totalIncome = useMemo(() => monthIncome.reduce((s, i) => s + i.amountCents, 0), [monthIncome]);
+  const totalFixed = useMemo(() => activeFixedForMonth.reduce((s, i) => s + i.amountCents, 0), [activeFixedForMonth]);
+  const totalVariable = useMemo(() => monthVariableExpenses.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [monthVariableExpenses]);
   const totalExpenses = totalFixed + totalVariable;
   const investAmountCents = Math.round((totalIncome * investPercent) / 100);
   const saldoCents = totalIncome - investAmountCents - totalExpenses;
@@ -352,19 +400,19 @@ export default function App() {
 
   const categoryBreakdown = useMemo(() => {
     const byCat = {};
-    variableExpenses.filter((e) => !e.deferred).forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + e.amountCents; });
+    monthVariableExpenses.filter((e) => !e.deferred).forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + e.amountCents; });
     return Object.entries(byCat)
       .map(([catId, value]) => ({ ...(variableCategories.find((c) => c.id === catId) || variableCategories[5]), value }))
       .sort((a, b) => b.value - a.value);
-  }, [variableExpenses]);
+  }, [monthVariableExpenses]);
 
   const FIXED_ITEM_COLORS = ["#0F9C8D", "#3D7FC9", "#E8556B", "#8B5FC9", "#E0A23C", "#B4638A"];
   const fixedBreakdown = useMemo(() => {
-    return fixedExpenses
-      .filter((e) => !e.deferred)
+    return activeFixedForMonth
+      .slice()
       .sort((a, b) => b.amountCents - a.amountCents)
       .map((e, idx) => ({ id: e.id, label: e.name, color: FIXED_ITEM_COLORS[idx % FIXED_ITEM_COLORS.length], value: e.amountCents }));
-  }, [fixedExpenses]);
+  }, [activeFixedForMonth]);
 
   const allocatedTotal = useMemo(() => investAllocations.reduce((s, i) => s + i.amountCents, 0), [investAllocations]);
   const remainingToAllocate = investAmountCents - allocatedTotal;
@@ -384,11 +432,11 @@ export default function App() {
       if (!byLabel[label]) byLabel[label] = { id: label, label, value: 0, color };
       byLabel[label].value += value;
     };
-    fixedExpenses.filter((e) => !e.deferred).forEach((e) => {
+    activeFixedForMonth.forEach((e) => {
       const cat = fixedCategories.find((c) => c.id === e.category) || fixedCategories[5];
       addSlice(cat.label, e.amountCents, cat.color);
     });
-    variableExpenses.filter((e) => !e.deferred).forEach((e) => {
+    monthVariableExpenses.filter((e) => !e.deferred).forEach((e) => {
       const cat = variableCategories.find((c) => c.id === e.category) || variableCategories[variableCategories.length - 1];
       addSlice(cat.label, e.amountCents, cat.color);
     });
@@ -398,7 +446,7 @@ export default function App() {
     const free = totalIncome - used;
     if (free > 0) slices.push({ id: "livre", label: "Livre", value: free, color: COLORS.income });
     return slices;
-  }, [fixedExpenses, variableExpenses, investAmountCents, totalIncome]);
+  }, [activeFixedForMonth, monthVariableExpenses, investAmountCents, totalIncome]);
 
   const emergencyReserveCents = useMemo(
     () => investAllocations.filter((a) => a.category === "reserva_emergencia").reduce((s, a) => s + a.amountCents, 0),
@@ -408,18 +456,18 @@ export default function App() {
   const emergencyGoalMonths = 6;
 
   const subscriptionsMonthlyCents = useMemo(
-    () => fixedExpenses.filter((e) => e.subscription).reduce((s, e) => s + e.amountCents, 0),
-    [fixedExpenses]
+    () => activeFixedForMonth.filter((e) => e.subscription).reduce((s, e) => s + e.amountCents, 0),
+    [activeFixedForMonth]
   );
   const subscriptionsAnnualCents = subscriptionsMonthlyCents * 12;
-  const activeSubscriptionsCount = fixedExpenses.filter((e) => e.subscription).length;
+  const activeSubscriptionsCount = activeFixedForMonth.filter((e) => e.subscription).length;
 
   const upcomingDue = useMemo(() => {
-    return fixedExpenses
-      .filter((e) => e.dueDay && !e.paid && !e.deferred)
+    return activeFixedForMonth
+      .filter((e) => e.dueDay && !e.paid)
       .map((e) => ({ ...e, daysLeft: daysUntilDue(e.dueDay) }))
       .sort((a, b) => a.daysLeft - b.daysLeft);
-  }, [fixedExpenses]);
+  }, [activeFixedForMonth]);
 
   const projectedFutureValueCents = useMemo(() => {
     const months = Math.max(0, parseInt(projectionMonths, 10) || 0);
@@ -433,7 +481,7 @@ export default function App() {
   const projectedGainCents = projectedFutureValueCents - projectedContributedCents;
 
   function saveMonthSnapshot() {
-    setPreviousMonthSnapshot({ label: MONTHS[monthIndex], totalIncome, totalExpenses, saldoCents });
+    setPreviousMonthSnapshot({ label: currentMonthLabel, totalIncome, totalExpenses, saldoCents });
   }
 
   const monthComparison = useMemo(() => {
@@ -452,17 +500,17 @@ export default function App() {
   const isReceitaTab = isBudget && budgetTab === "receita";
   const isFixaTab = isBudget && budgetTab === "fixa";
   const isVariavelTab = isBudget && budgetTab === "variavel";
-  const rows = budgetTab === "receita" ? income : budgetTab === "fixa" ? fixedExpenses : variableExpenses;
+  const rows = budgetTab === "receita" ? monthIncome : budgetTab === "fixa" ? activeFixedForMonth : monthVariableExpenses;
   const rowsTotal = budgetTab === "receita" ? totalIncome : budgetTab === "fixa" ? totalFixed : totalVariable;
   const rowsTone = budgetTab === "receita" ? "income" : "expense";
   const tabLabel = { receita: "Receita", fixa: "Despesa fixa", variavel: "Despesa variável" };
 
   const overviewRows = useMemo(() => [
-    ...income.map((r) => ({ ...r, kind: "receita" })),
-    ...fixedExpenses.map((r) => ({ ...r, kind: "fixa" })),
-    ...variableExpenses.map((r) => ({ ...r, kind: "variavel" })),
+    ...monthIncome.map((r) => ({ ...r, kind: "receita" })),
+    ...activeFixedForMonth.map((r) => ({ ...r, kind: "fixa" })),
+    ...monthVariableExpenses.map((r) => ({ ...r, kind: "variavel" })),
     ...investAllocations.map((r) => ({ ...r, kind: "investimento" })),
-  ], [income, fixedExpenses, variableExpenses, investAllocations]);
+  ], [monthIncome, activeFixedForMonth, monthVariableExpenses, investAllocations]);
 
   const tableSource = isOverview ? overviewRows : isInvest ? investAllocations : rows;
   const tableRows = tableSource.filter((r) => r.name.toLowerCase().includes(search.toLowerCase()));
@@ -486,16 +534,19 @@ export default function App() {
     setFormError("");
     const defaultCategory = type === "investimento" ? "renda_fixa" : type === "receita" ? "fixa" : type === "fixa" ? "moradia" : "mercado";
     if (existing) {
-      setEditingId(existing.id);
-      setFormName(existing.name);
-      setFormAmountCents(existing.amountCents);
-      setFormCategory(existing.category || defaultCategory);
+      // Para despesa fixa, a linha exibida traz o parcelamento já projetado pro mês
+      // selecionado; buscamos a definição crua pra não regravar o parcelamento errado.
+      const rawExisting = type === "fixa" ? (fixedExpenses.find((f) => f.id === existing.id) || existing) : existing;
+      setEditingId(rawExisting.id);
+      setFormName(rawExisting.name);
+      setFormAmountCents(rawExisting.amountCents);
+      setFormCategory(rawExisting.category || defaultCategory);
       if (type === "fixa") {
-        setFormRecurrenceType(existing.installment ? "parcelado" : existing.subscription ? "assinatura" : "fixo");
-        setFormInstallmentCurrent(existing.installment ? String(existing.installment.current) : "1");
-        setFormInstallmentTotal(existing.installment ? String(existing.installment.total) : "2");
-        setFormDueDay(existing.dueDay ? String(existing.dueDay) : "");
-        setFormPaymentDate(existing.paymentDate || "");
+        setFormRecurrenceType(rawExisting.installment ? "parcelado" : rawExisting.subscription ? "assinatura" : "fixo");
+        setFormInstallmentCurrent(rawExisting.installment ? String(rawExisting.installment.current) : "1");
+        setFormInstallmentTotal(rawExisting.installment ? String(rawExisting.installment.total) : "2");
+        setFormDueDay(rawExisting.dueDay ? String(rawExisting.dueDay) : "");
+        setFormPaymentDate("");
       } else if (type === "variavel") {
         setFormPaymentDate(existing.paymentDate || "");
       } else if (type === "receita") {
@@ -557,6 +608,7 @@ export default function App() {
         category: formCategory,
         receiptDate: formPaymentDate || null,
         received: editingId ? existingEntry.received || false : false,
+        referenceMonth: editingId ? existingEntry.referenceMonth || currentMonthKey : currentMonthKey,
       };
     } else if (addModalType === "fixa") {
       const installment = formRecurrenceType === "parcelado"
@@ -564,16 +616,18 @@ export default function App() {
         : null;
       const subscription = formRecurrenceType === "assinatura";
       const dueDay = formDueDay ? Math.min(31, Math.max(1, parseInt(formDueDay, 10) || 0)) || null : null;
+      const startMonth = editingId ? existingEntry.startMonth || currentMonthKey : currentMonthKey;
+      const paidMonths = editingId
+        ? existingEntry.paidMonths || {}
+        : (formPaymentDate ? { [startMonth]: { paid: true, paymentDate: formPaymentDate } } : {});
       payload = {
         ...entry,
         category: formCategory,
         installment,
         subscription,
         dueDay,
-        paymentDate: formPaymentDate || null,
-        paid: editingId ? (formPaymentDate ? true : existingEntry.paid || false) : !!formPaymentDate,
-        deferred: editingId ? existingEntry.deferred || false : false,
-        lateFromPreviousMonth: editingId ? existingEntry.lateFromPreviousMonth || false : false,
+        startMonth,
+        paidMonths,
       };
     } else if (addModalType === "investimento") {
       payload = { ...entry, category: formCategory };
@@ -584,6 +638,7 @@ export default function App() {
         paymentDate: formPaymentDate || null,
         paid: editingId ? (formPaymentDate ? true : existingEntry.paid || false) : !!formPaymentDate,
         deferred: editingId ? existingEntry.deferred || false : false,
+        referenceMonth: editingId ? existingEntry.referenceMonth || currentMonthKey : currentMonthKey,
       };
     }
 
@@ -623,16 +678,30 @@ export default function App() {
   }
 
   async function togglePaid(kind, id) {
-    const list = kind === "fixa" ? fixedExpenses : variableExpenses;
-    const current = list.find((i) => i.id === id);
+    if (kind === "fixa") {
+      const def = fixedExpenses.find((f) => f.id === id);
+      if (!def) return;
+      const currentStatus = def.paidMonths?.[currentMonthKey] || {};
+      const nextPaid = !currentStatus.paid;
+      const nextPaidMonths = {
+        ...def.paidMonths,
+        [currentMonthKey]: { paid: nextPaid, paymentDate: nextPaid ? todayISO() : currentStatus.paymentDate || null },
+      };
+      try {
+        const saved = await patchEntry("fixa", id, { paid_months: nextPaidMonths });
+        setFixedExpenses((prev) => prev.map((i) => (i.id === id ? saved : i)));
+      } catch (e) {
+        console.error("Falha ao atualizar pagamento:", e);
+      }
+      return;
+    }
+    const current = variableExpenses.find((i) => i.id === id);
     if (!current) return;
     const nextPaid = !current.paid;
     const nextPaymentDate = nextPaid ? todayISO() : current.paymentDate;
     try {
-      const saved = await patchEntry(kind, id, { paid: nextPaid, payment_date: nextPaymentDate });
-      const updater = (prev) => prev.map((i) => (i.id === id ? saved : i));
-      if (kind === "fixa") setFixedExpenses(updater);
-      else setVariableExpenses(updater);
+      const saved = await patchEntry("variavel", id, { paid: nextPaid, payment_date: nextPaymentDate });
+      setVariableExpenses((prev) => prev.map((i) => (i.id === id ? saved : i)));
     } catch (e) {
       console.error("Falha ao atualizar pagamento:", e);
     }
@@ -651,24 +720,21 @@ export default function App() {
     }
   }
 
-  async function deferToNextMonth(kind, entry) {
+  async function deferToNextMonth(kind, entryRow) {
+    if (kind !== "variavel") return;
     try {
-      if (kind === "fixa") {
-        const updatedCurrent = await patchEntry("fixa", entry.id, { deferred: true });
-        const duplicatePayload = {
-          ...entry,
-          deferred: false,
-          paid: false,
-          paymentDate: null,
-          lateFromPreviousMonth: true,
-        };
-        delete duplicatePayload.id;
-        const inserted = await insertEntry("fixa", duplicatePayload, user.id);
-        setFixedExpenses((prev) => [...prev.map((i) => (i.id === entry.id ? updatedCurrent : i)), inserted]);
-      } else if (kind === "variavel") {
-        const updated = await patchEntry("variavel", entry.id, { deferred: true });
-        setVariableExpenses((prev) => prev.map((i) => (i.id === entry.id ? updated : i)));
-      }
+      const updatedCurrent = await patchEntry("variavel", entryRow.id, { deferred: true });
+      const nextMonthKey = monthKeyFromOffset(monthOffset + 1);
+      const duplicatePayload = {
+        ...entryRow,
+        deferred: false,
+        paid: false,
+        paymentDate: null,
+        referenceMonth: nextMonthKey,
+      };
+      delete duplicatePayload.id;
+      const inserted = await insertEntry("variavel", duplicatePayload, user.id);
+      setVariableExpenses((prev) => [...prev.map((i) => (i.id === entryRow.id ? updatedCurrent : i)), inserted]);
     } catch (e) {
       console.error("Falha ao adiar lançamento:", e);
     }
@@ -804,8 +870,8 @@ export default function App() {
   }
 
   const trackedIncome = useMemo(
-    () => [...income].filter((e) => e.receiptDate).sort((a, b) => a.receiptDate.localeCompare(b.receiptDate)),
-    [income]
+    () => [...monthIncome].filter((e) => e.receiptDate).sort((a, b) => a.receiptDate.localeCompare(b.receiptDate)),
+    [monthIncome]
   );
 
   async function confirmReceived(id) {
@@ -848,11 +914,6 @@ export default function App() {
               </div>
               <div className="min-w-0">
                 <span className="text-xs font-medium truncate block" style={{ color: COLORS.ink900 }}>{r.name}</span>
-                {r.lateFromPreviousMonth && (
-                  <span className="text-[10px] font-semibold" style={{ color: COLORS.expense }}>
-                    Atraso do mês anterior
-                  </span>
-                )}
                 {r.deferred && (
                   <span className="text-[10px] font-medium" style={{ color: COLORS.ink400 }}>
                     Adiada p/ mês seguinte
@@ -919,7 +980,7 @@ export default function App() {
                   Recebido
                 </button>
               )}
-              {showActions && canTrackPayment && !r.deferred && !r.lateFromPreviousMonth && (
+              {showActions && kind === "variavel" && !r.deferred && (
                 <button
                   onClick={() => deferToNextMonth(kind, r)}
                   aria-label="Lançar para o mês seguinte"
@@ -1314,11 +1375,11 @@ export default function App() {
                 </div>
               </div>
               <div className="flex items-center gap-1 rounded-full px-2 py-1" style={{ background: "rgba(255,255,255,0.08)" }}>
-                <button onClick={() => setMonthIndex((m) => Math.max(0, m - 1))} aria-label="Mês anterior">
+                <button onClick={() => setMonthOffset((m) => m - 1)} aria-label="Mês anterior">
                   <ChevronLeft size={14} color="rgba(255,255,255,0.7)" />
                 </button>
-                <span className="text-[11px] font-medium px-1 text-white">{MONTHS[monthIndex]}</span>
-                <button onClick={() => setMonthIndex((m) => Math.min(MONTHS.length - 1, m + 1))} aria-label="Próximo mês">
+                <span className="text-[11px] font-medium px-1 text-white">{currentMonthLabel}</span>
+                <button onClick={() => setMonthOffset((m) => m + 1)} aria-label="Próximo mês">
                   <ChevronRight size={14} color="rgba(255,255,255,0.7)" />
                 </button>
               </div>
@@ -1353,7 +1414,7 @@ export default function App() {
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-medium" style={{ color: COLORS.ink600 }}>{balanceLabel}</span>
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: COLORS.primarySoft, color: COLORS.primary }}>
-                  {MONTHS[monthIndex].split(" ")[0]}
+                  {currentMonthLabel.split(" ")[0]}
                 </span>
               </div>
               <div className="text-2xl font-bold tabular-nums mb-4" style={{ color: balanceTone }}>

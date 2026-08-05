@@ -13,6 +13,7 @@ function rowToIncome(row) {
     date: row.date,
     receiptDate: row.receipt_date,
     received: !!row.received,
+    referenceMonth: row.reference_month,
   };
 }
 function incomeToRow(entry) {
@@ -23,6 +24,7 @@ function incomeToRow(entry) {
     date: entry.date ?? null,
     receipt_date: entry.receiptDate ?? null,
     received: !!entry.received,
+    reference_month: entry.referenceMonth,
   };
 }
 
@@ -38,10 +40,8 @@ function rowToFixed(row) {
       : null,
     subscription: !!row.subscription,
     dueDay: row.due_day,
-    paymentDate: row.payment_date,
-    paid: !!row.paid,
-    deferred: !!row.deferred,
-    lateFromPreviousMonth: !!row.late_from_previous_month,
+    startMonth: row.start_month,
+    paidMonths: row.paid_months || {},
   };
 }
 function fixedToRow(entry) {
@@ -54,10 +54,8 @@ function fixedToRow(entry) {
     installment_total: entry.installment ? entry.installment.total : null,
     subscription: !!entry.subscription,
     due_day: entry.dueDay ?? null,
-    payment_date: entry.paymentDate ?? null,
-    paid: !!entry.paid,
-    deferred: !!entry.deferred,
-    late_from_previous_month: !!entry.lateFromPreviousMonth,
+    start_month: entry.startMonth,
+    paid_months: entry.paidMonths || {},
   };
 }
 
@@ -71,6 +69,7 @@ function rowToVariable(row) {
     paymentDate: row.payment_date,
     paid: !!row.paid,
     deferred: !!row.deferred,
+    referenceMonth: row.reference_month,
   };
 }
 function variableToRow(entry) {
@@ -82,6 +81,7 @@ function variableToRow(entry) {
     payment_date: entry.paymentDate ?? null,
     paid: !!entry.paid,
     deferred: !!entry.deferred,
+    reference_month: entry.referenceMonth,
   };
 }
 
