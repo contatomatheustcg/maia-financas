@@ -109,7 +109,8 @@ function rowToCategory(row) {
 
 function rowToSettings(row) {
   return {
-    investPercent: row.invest_percent ?? 0,
+    // numeric columns come back from PostgREST as strings to avoid float precision loss
+    investPercent: row.invest_percent != null ? parseFloat(row.invest_percent) : 0,
     categoryBudgets: row.category_budgets ?? {},
     categoriesSeeded: row.categories_seeded ?? false,
   };

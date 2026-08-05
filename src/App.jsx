@@ -94,6 +94,7 @@ const INCOME_CATEGORY_PALETTE = [
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const brl = (cents) => (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const formatPercent = (p) => Number((p || 0).toFixed(2)).toString().replace(".", ",");
 const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -837,7 +838,8 @@ export default function App() {
 
   function setInvestAmountFromInput(cents) {
     setTempInvestAmountCents(cents);
-    const pct = totalIncome > 0 ? Math.round((cents / totalIncome) * 100) : 0;
+    // 2 casas decimais no percentual pra acertar o valor digitado em reais, não só o inteiro mais próximo
+    const pct = totalIncome > 0 ? Math.round((cents / totalIncome) * 100 * 100) / 100 : 0;
     setTempInvestPercent(Math.min(100, Math.max(0, pct)));
   }
 
@@ -1811,7 +1813,7 @@ export default function App() {
                     <Target size={15} color={COLORS.invest} />
                   </div>
                 </div>
-                <div className="text-xl font-bold tabular-nums mb-2" style={{ color: COLORS.ink900 }}>{investPercent}%</div>
+                <div className="text-xl font-bold tabular-nums mb-2" style={{ color: COLORS.ink900 }}>{formatPercent(investPercent)}%</div>
                 <div className="h-1.5 rounded-full overflow-hidden" style={{ background: COLORS.page }}>
                   <div className="h-full rounded-full" style={{ width: `${Math.min(100, investPercent)}%`, background: COLORS.invest }} />
                 </div>
@@ -2061,7 +2063,7 @@ export default function App() {
       {/* invest modal */}
       <Modal open={investModalOpen} onClose={() => setInvestModalOpen(false)} title="Investir" subtitle="Quanto da sua receita você reserva pra investir.">
         <div className="text-center mb-3">
-          <span className="text-4xl font-bold" style={{ color: COLORS.invest }}>{tempInvestPercent}%</span>
+          <span className="text-4xl font-bold" style={{ color: COLORS.invest }}>{formatPercent(tempInvestPercent)}%</span>
         </div>
         <input
           type="range"
