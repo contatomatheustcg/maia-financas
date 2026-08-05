@@ -333,6 +333,7 @@ export default function App() {
   const [formCategory, setFormCategory] = useState("mercado");
   const [formError, setFormError] = useState("");
   const [formRecurrenceType, setFormRecurrenceType] = useState("fixo");
+  const [formIncomeRecurring, setFormIncomeRecurring] = useState(false);
   const [formInstallmentCurrent, setFormInstallmentCurrent] = useState("1");
   const [formInstallmentTotal, setFormInstallmentTotal] = useState("2");
   const [formDueDay, setFormDueDay] = useState("");
@@ -436,10 +437,19 @@ export default function App() {
 
   /* -------------------------- derived totals -------------------------- */
 
-  const monthIncome = useMemo(
-    () => income.filter((i) => i.referenceMonth === currentMonthKey),
-    [income, currentMonthKey]
-  );
+  const monthIncome = useMemo(() => {
+    return income
+      .map((inc) => {
+        if (!inc.recurring) {
+          return inc.referenceMonth === currentMonthKey ? inc : null;
+        }
+        const offset = monthsBetween(inc.startMonth, currentMonthKey);
+        if (offset < 0) return null;
+        const status = inc.receivedMonths?.[currentMonthKey] || {};
+        return { ...inc, received: !!status.received, receiptDate: status.receiptDate || null };
+      })
+      .filter(Boolean);
+  }, [income, currentMonthKey]);
   const monthVariableExpenses = useMemo(
     () => variableExpenses.filter((e) => e.referenceMonth === currentMonthKey),
     [variableExpenses, currentMonthKey]
@@ -644,6 +654,7 @@ export default function App() {
         setFormPaidStatus(existing.paid ? "pago" : "aberto");
       } else if (type === "receita") {
         setFormPaymentDate(existing.receiptDate || "");
+        setFormIncomeRecurring(!!existing.recurring);
       }
     } else {
       setEditingId(null);
@@ -652,6 +663,7 @@ export default function App() {
       setFormCategory(defaultCategory);
       setFormPaymentDate("");
       setFormPaidStatus("aberto");
+      setFormIncomeRecurring(false);
       if (type === "fixa") {
         setFormRecurrenceType("fixo");
         setFormInstallmentCurrent("1");
@@ -697,13 +709,21 @@ export default function App() {
     const entry = { name: formName.trim(), amountCents: formAmountCents, date: pickedDate || existingEntry.date || todayShort() };
     let payload;
     if (addModalType === "receita") {
-      payload = {
-        ...entry,
-        category: formCategory,
-        receiptDate: formPaymentDate || null,
-        received: editingId ? existingEntry.received || false : false,
-        referenceMonth: editingId ? existingEntry.referenceMonth || currentMonthKey : currentMonthKey,
-      };
+      const recurring = formIncomeRecurring;
+      payload = { ...entry, category: formCategory, recurring };
+      if (recurring) {
+        payload.startMonth = editingId ? existingEntry.startMonth || currentMonthKey : currentMonthKey;
+        payload.receivedMonths = editingId ? existingEntry.receivedMonths || {} : {};
+        payload.referenceMonth = null;
+        payload.receiptDate = null;
+        payload.received = false;
+      } else {
+        payload.receiptDate = formPaymentDate || null;
+        payload.received = editingId ? existingEntry.received || false : false;
+        payload.referenceMonth = editingId ? existingEntry.referenceMonth || currentMonthKey : currentMonthKey;
+        payload.startMonth = null;
+        payload.receivedMonths = {};
+      }
     } else if (addModalType === "fixa") {
       const installment = formRecurrenceType === "parcelado"
         ? { current: Math.max(1, parseInt(formInstallmentCurrent, 10) || 1), total: Math.max(1, parseInt(formInstallmentTotal, 10) || 1) }
@@ -810,6 +830,21 @@ export default function App() {
   async function toggleReceived(id) {
     const current = income.find((i) => i.id === id);
     if (!current) return;
+    if (current.recurring) {
+      const status = current.receivedMonths?.[currentMonthKey] || {};
+      const nextReceived = !status.received;
+      const nextReceivedMonths = {
+        ...current.receivedMonths,
+        [currentMonthKey]: { received: nextReceived, receiptDate: nextReceived ? todayISO() : status.receiptDate || null },
+      };
+      try {
+        const saved = await patchEntry("receita", id, { received_months: nextReceivedMonths });
+        setIncome((prev) => prev.map((i) => (i.id === id ? saved : i)));
+      } catch (e) {
+        console.error("Falha ao atualizar recebimento:", e);
+      }
+      return;
+    }
     const nextReceived = !current.received;
     const nextReceiptDate = nextReceived ? todayISO() : current.receiptDate;
     try {
@@ -1016,9 +1051,21 @@ export default function App() {
   );
 
   async function confirmReceived(id) {
+    const current = income.find((i) => i.id === id);
+    if (!current) return;
     try {
-      const saved = await patchEntry("receita", id, { received: true });
-      setIncome((prev) => prev.map((i) => (i.id === id ? saved : i)));
+      if (current.recurring) {
+        const status = current.receivedMonths?.[currentMonthKey] || {};
+        const nextReceivedMonths = {
+          ...current.receivedMonths,
+          [currentMonthKey]: { received: true, receiptDate: status.receiptDate || todayISO() },
+        };
+        const saved = await patchEntry("receita", id, { received_months: nextReceivedMonths });
+        setIncome((prev) => prev.map((i) => (i.id === id ? saved : i)));
+      } else {
+        const saved = await patchEntry("receita", id, { received: true });
+        setIncome((prev) => prev.map((i) => (i.id === id ? saved : i)));
+      }
     } catch (e) {
       console.error("Falha ao confirmar recebimento:", e);
     }
@@ -2406,6 +2453,26 @@ export default function App() {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+          {addModalType === "receita" && (
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Recorrência</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[{ id: false, label: "Eventual" }, { id: true, label: "Recorrente" }].map((o) => (
+                  <button
+                    key={String(o.id)}
+                    onClick={() => setFormIncomeRecurring(o.id)}
+                    className="text-xs font-medium py-2 rounded-xl"
+                    style={formIncomeRecurring === o.id ? { background: COLORS.ink900, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              {formIncomeRecurring && (
+                <p className="text-[11px] mt-1" style={{ color: COLORS.ink400 }}>Conta automaticamente todo mês a partir de {currentMonthLabel}, até você excluir.</p>
+              )}
             </div>
           )}
           {addModalType === "fixa" && (

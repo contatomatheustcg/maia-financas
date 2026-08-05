@@ -14,6 +14,9 @@ function rowToIncome(row) {
     receiptDate: row.receipt_date,
     received: !!row.received,
     referenceMonth: row.reference_month,
+    recurring: !!row.recurring,
+    startMonth: row.start_month,
+    receivedMonths: row.received_months || {},
   };
 }
 function incomeToRow(entry) {
@@ -24,7 +27,10 @@ function incomeToRow(entry) {
     date: entry.date ?? null,
     receipt_date: entry.receiptDate ?? null,
     received: !!entry.received,
-    reference_month: entry.referenceMonth,
+    reference_month: entry.referenceMonth ?? null,
+    recurring: !!entry.recurring,
+    start_month: entry.startMonth ?? null,
+    received_months: entry.receivedMonths || {},
   };
 }
 
