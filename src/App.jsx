@@ -268,6 +268,8 @@ export default function App() {
   const [investPercent, setInvestPercent] = useState(0);
   const [investModalOpen, setInvestModalOpen] = useState(false);
   const [tempInvestPercent, setTempInvestPercent] = useState(0);
+  const [tempInvestAmountCents, setTempInvestAmountCents] = useState(0);
+  const [investAmountEditing, setInvestAmountEditing] = useState(false);
   const [investAllocations, setInvestAllocations] = useState([]);
 
   const [categoryBudgets, setCategoryBudgets] = useState({});
@@ -820,8 +822,24 @@ export default function App() {
     }
   }
 
-  function openInvestModal() { setTempInvestPercent(investPercent); setInvestModalOpen(true); }
+  function openInvestModal() {
+    setTempInvestPercent(investPercent);
+    setTempInvestAmountCents(Math.round((totalIncome * investPercent) / 100));
+    setInvestAmountEditing(false);
+    setInvestModalOpen(true);
+  }
   function saveInvest() { setInvestPercent(tempInvestPercent); setInvestModalOpen(false); }
+
+  function setInvestPercentFromSlider(p) {
+    setTempInvestPercent(p);
+    setTempInvestAmountCents(Math.round((totalIncome * p) / 100));
+  }
+
+  function setInvestAmountFromInput(cents) {
+    setTempInvestAmountCents(cents);
+    const pct = totalIncome > 0 ? Math.round((cents / totalIncome) * 100) : 0;
+    setTempInvestPercent(Math.min(100, Math.max(0, pct)));
+  }
 
   async function handleLogin() {
     if (!loginEmail.trim() || !loginPassword.trim()) {
@@ -2050,7 +2068,7 @@ export default function App() {
           min={0}
           max={100}
           value={tempInvestPercent}
-          onChange={(e) => setTempInvestPercent(parseInt(e.target.value, 10))}
+          onChange={(e) => setInvestPercentFromSlider(parseInt(e.target.value, 10))}
           className="w-full mb-3"
           style={{ accentColor: COLORS.invest }}
         />
@@ -2058,7 +2076,7 @@ export default function App() {
           {[20, 30, 40, 50].map((p) => (
             <button
               key={p}
-              onClick={() => setTempInvestPercent(p)}
+              onClick={() => setInvestPercentFromSlider(p)}
               className="text-xs font-medium py-2 rounded-xl"
               style={tempInvestPercent === p ? { background: COLORS.invest, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
             >
@@ -2069,12 +2087,25 @@ export default function App() {
         <div className="text-center mb-1">
           <span className="text-[11px] font-semibold tracking-wide uppercase" style={{ color: COLORS.ink400 }}>Valor a investir</span>
         </div>
-        <div className="text-center mb-5">
-          <span className="text-2xl font-semibold tabular-nums" style={{ color: COLORS.ink900 }}>
-            {brl(Math.round((totalIncome * tempInvestPercent) / 100))}
-          </span>
+        <div className="flex justify-center mb-5">
+          {investAmountEditing ? (
+            <div className="w-40">
+              <CurrencyInput valueCents={tempInvestAmountCents} onChange={setInvestAmountFromInput} autoFocus />
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setInvestAmountEditing(true)}
+              className="text-2xl font-semibold tabular-nums"
+              style={{ color: COLORS.ink900 }}
+            >
+              {brl(tempInvestAmountCents)}
+            </button>
+          )}
         </div>
-        <p className="text-[11px] text-center mb-4" style={{ color: COLORS.ink400 }}>Toque no valor pra digitar. O percentual se ajusta sozinho.</p>
+        <p className="text-[11px] text-center mb-4" style={{ color: COLORS.ink400 }}>
+          {investAmountEditing ? "O percentual se ajusta sozinho conforme você digita." : "Toque no valor pra digitar. O percentual se ajusta sozinho."}
+        </p>
         <div className="flex gap-2">
           <button onClick={() => setInvestModalOpen(false)} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.page, color: COLORS.ink600 }}>Cancelar</button>
           <button onClick={saveInvest} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.primary, color: "#fff" }}>Salvar</button>
