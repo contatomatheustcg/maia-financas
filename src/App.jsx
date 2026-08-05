@@ -2100,8 +2100,8 @@ export default function App() {
             </div>
             {(addModalType === "receita" || addModalType === "fixa" || addModalType === "variavel") && (
               <div>
-                <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>
-                  {addModalType === "receita" ? "Data de recebimento (opcional)" : "Data de pagamento (opcional)"}
+                <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1 whitespace-nowrap" style={{ color: COLORS.ink400 }}>
+                  {addModalType === "receita" ? "Recebimento (opcional)" : "Pagamento (opcional)"}
                 </label>
                 <input
                   type="date"
