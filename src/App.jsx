@@ -5,6 +5,11 @@ import {
   Cell,
   ResponsiveContainer,
   Tooltip,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
 } from "recharts";
 import {
   Eye, EyeOff, Bell, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, X,
@@ -285,6 +290,13 @@ export default function App() {
   const [projectionMonths, setProjectionMonths] = useState("12");
   const [projectionRate, setProjectionRate] = useState("0.8");
 
+  const [calcInitialCents, setCalcInitialCents] = useState(0);
+  const [calcMonthlyCents, setCalcMonthlyCents] = useState(0);
+  const [calcRateValue, setCalcRateValue] = useState("1");
+  const [calcRatePeriod, setCalcRatePeriod] = useState("mensal");
+  const [calcPeriodValue, setCalcPeriodValue] = useState("12");
+  const [calcPeriodUnit, setCalcPeriodUnit] = useState("meses");
+
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addModalType, setAddModalType] = useState("variavel");
   const [editingId, setEditingId] = useState(null);
@@ -504,6 +516,25 @@ export default function App() {
   }, [investAmountCents, projectionMonths, projectionRate]);
   const projectedContributedCents = Math.max(0, parseInt(projectionMonths, 10) || 0) * investAmountCents;
   const projectedGainCents = projectedFutureValueCents - projectedContributedCents;
+
+  const compoundCalc = useMemo(() => {
+    const rate = parseFloat(calcRateValue.replace(",", ".")) || 0;
+    const monthlyRate = calcRatePeriod === "anual" ? Math.pow(1 + rate / 100, 1 / 12) - 1 : rate / 100;
+    const periodRaw = Math.max(0, parseInt(calcPeriodValue, 10) || 0);
+    const totalMonths = Math.min(1200, calcPeriodUnit === "anos" ? periodRaw * 12 : periodRaw);
+    const monthlyContribution = calcMonthlyCents / 100;
+    let balance = calcInitialCents / 100;
+    let invested = calcInitialCents / 100;
+    const rows = [{ month: 0, invested, interest: 0, balance }];
+    for (let m = 1; m <= totalMonths; m++) {
+      balance = balance * (1 + monthlyRate) + monthlyContribution;
+      invested += monthlyContribution;
+      rows.push({ month: m, invested, interest: balance - invested, balance });
+    }
+    const yearly = rows.filter((r) => r.month % 12 === 0 || r.month === totalMonths);
+    const final = rows[rows.length - 1];
+    return { rows, yearly, totalMonths, final };
+  }, [calcInitialCents, calcMonthlyCents, calcRateValue, calcRatePeriod, calcPeriodValue, calcPeriodUnit]);
 
   function saveMonthSnapshot() {
     setPreviousMonthSnapshot({ label: currentMonthLabel, totalIncome, totalExpenses, saldoCents });
@@ -1921,6 +1952,145 @@ export default function App() {
                   </>
                 )}
               </div>
+            </div>
+            )}
+
+            {isInvest && (
+            <div className="rounded-2xl p-5" style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}` }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-semibold" style={{ color: COLORS.ink900 }}>Calculadora de juros compostos</span>
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: COLORS.primarySoft }}>
+                  <Sparkles size={15} color={COLORS.primary} />
+                </div>
+              </div>
+              <p className="text-xs mb-4" style={{ color: COLORS.ink400 }}>Simule o crescimento de um investimento com aportes mensais.</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Valor inicial</label>
+                  <CurrencyInput valueCents={calcInitialCents} onChange={setCalcInitialCents} />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Aporte mensal</label>
+                  <CurrencyInput valueCents={calcMonthlyCents} onChange={setCalcMonthlyCents} />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Taxa de juros</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={calcRateValue}
+                      onChange={(e) => setCalcRateValue(e.target.value)}
+                      className="w-16 rounded-xl px-3 py-2.5 outline-none text-base"
+                      style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}`, color: COLORS.ink900 }}
+                    />
+                    <div className="flex rounded-xl overflow-hidden flex-1" style={{ border: `1px solid ${COLORS.cardBorder}` }}>
+                      {[{ id: "mensal", label: "% a.m." }, { id: "anual", label: "% a.a." }].map((o) => (
+                        <button
+                          key={o.id}
+                          onClick={() => setCalcRatePeriod(o.id)}
+                          className="flex-1 text-xs font-medium py-2"
+                          style={calcRatePeriod === o.id ? { background: COLORS.ink900, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Período</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      value={calcPeriodValue}
+                      onChange={(e) => setCalcPeriodValue(e.target.value)}
+                      className="w-16 rounded-xl px-3 py-2.5 outline-none text-base"
+                      style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}`, color: COLORS.ink900 }}
+                    />
+                    <div className="flex rounded-xl overflow-hidden flex-1" style={{ border: `1px solid ${COLORS.cardBorder}` }}>
+                      {[{ id: "meses", label: "Meses" }, { id: "anos", label: "Anos" }].map((o) => (
+                        <button
+                          key={o.id}
+                          onClick={() => setCalcPeriodUnit(o.id)}
+                          className="flex-1 text-xs font-medium py-2"
+                          style={calcPeriodUnit === o.id ? { background: COLORS.ink900, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                <div className="rounded-xl p-3" style={{ background: COLORS.primarySoft }}>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: COLORS.primary }}>Valor total final</div>
+                  <div className="text-lg font-bold tabular-nums" style={{ color: COLORS.ink900 }}>
+                    {hideAmounts ? "R$ ••••" : brl(Math.round(compoundCalc.final.balance * 100))}
+                  </div>
+                </div>
+                <div className="rounded-xl p-3" style={{ background: COLORS.page }}>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: COLORS.ink600 }}>Total investido</div>
+                  <div className="text-lg font-bold tabular-nums" style={{ color: COLORS.ink900 }}>
+                    {hideAmounts ? "R$ ••••" : brl(Math.round(compoundCalc.final.invested * 100))}
+                  </div>
+                </div>
+                <div className="rounded-xl p-3" style={{ background: COLORS.incomeSoft }}>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: COLORS.income }}>Total em juros</div>
+                  <div className="text-lg font-bold tabular-nums" style={{ color: COLORS.ink900 }}>
+                    {hideAmounts ? "R$ ••••" : brl(Math.round(compoundCalc.final.interest * 100))}
+                  </div>
+                </div>
+              </div>
+
+              {compoundCalc.totalMonths > 0 && (
+                <div style={{ height: 200 }} className="mb-5">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={compoundCalc.rows} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={COLORS.cardBorder} vertical={false} />
+                      <XAxis dataKey="month" tickFormatter={(m) => `${m}m`} tick={{ fontSize: 10, fill: COLORS.ink400 }} axisLine={false} tickLine={false} minTickGap={30} />
+                      <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fontSize: 10, fill: COLORS.ink400 }} axisLine={false} tickLine={false} width={32} />
+                      <Tooltip
+                        formatter={(v, name) => [hideAmounts ? "••••" : brl(Math.round(v * 100)), name === "invested" ? "Investido" : "Juros"]}
+                        labelFormatter={(m) => `Mês ${m}`}
+                        contentStyle={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 10 }}
+                      />
+                      <Area type="monotone" dataKey="invested" stackId="1" stroke={COLORS.primary} fill={COLORS.primarySoft} name="invested" />
+                      <Area type="monotone" dataKey="interest" stackId="1" stroke={COLORS.income} fill={COLORS.incomeSoft} name="interest" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {compoundCalc.yearly.length > 1 && (
+                <div className="overflow-x-auto -mx-1">
+                  <table className="w-full text-left border-collapse min-w-[420px]">
+                    <thead>
+                      <tr>
+                        {["Período", "Investido", "Juros", "Acumulado"].map((h) => (
+                          <th key={h} className="text-[10px] font-semibold uppercase tracking-wide px-3 pb-2" style={{ color: COLORS.ink400 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compoundCalc.yearly.map((r) => (
+                        <tr key={r.month} style={{ borderTop: `1px solid ${COLORS.cardBorder}` }}>
+                          <td className="px-3 py-2 text-xs" style={{ color: COLORS.ink900 }}>
+                            {r.month === 0 ? "Início" : r.month % 12 === 0 ? `${r.month / 12} ano${r.month > 12 ? "s" : ""}` : `${r.month} meses`}
+                          </td>
+                          <td className="px-3 py-2 text-xs tabular-nums" style={{ color: COLORS.ink600 }}>{hideAmounts ? "••••" : brl(Math.round(r.invested * 100))}</td>
+                          <td className="px-3 py-2 text-xs tabular-nums" style={{ color: COLORS.income }}>{hideAmounts ? "••••" : brl(Math.round(r.interest * 100))}</td>
+                          <td className="px-3 py-2 text-xs font-semibold tabular-nums" style={{ color: COLORS.ink900 }}>{hideAmounts ? "••••" : brl(Math.round(r.balance * 100))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
             )}
 
