@@ -568,8 +568,8 @@ export default function App() {
         setFormInstallmentCurrent(rawExisting.installment ? String(rawExisting.installment.current) : "1");
         setFormInstallmentTotal(rawExisting.installment ? String(rawExisting.installment.total) : "2");
         setFormDueDay(rawExisting.dueDay ? String(rawExisting.dueDay) : "");
-        setFormPaymentDate("");
-        setFormPaidStatus("aberto");
+        setFormPaymentDate(existing.paymentDate || "");
+        setFormPaidStatus(existing.paid ? "pago" : "aberto");
       } else if (type === "variavel") {
         setFormPaymentDate(existing.paymentDate || "");
         setFormPaidStatus(existing.paid ? "pago" : "aberto");
@@ -642,9 +642,14 @@ export default function App() {
       const subscription = formRecurrenceType === "assinatura";
       const dueDay = formDueDay ? Math.min(31, Math.max(1, parseInt(formDueDay, 10) || 0)) || null : null;
       const startMonth = editingId ? existingEntry.startMonth || currentMonthKey : currentMonthKey;
-      const paidMonths = editingId
-        ? existingEntry.paidMonths || {}
-        : (formPaidStatus === "pago" ? { [startMonth]: { paid: true, paymentDate: formPaymentDate || todayISO() } } : {});
+      const paid = formPaidStatus === "pago";
+      const existingPaidMonths = existingEntry.paidMonths || {};
+      const paidMonths = {
+        ...existingPaidMonths,
+        [currentMonthKey]: paid
+          ? { paid: true, paymentDate: formPaymentDate || existingPaidMonths[currentMonthKey]?.paymentDate || todayISO() }
+          : { paid: false, paymentDate: existingPaidMonths[currentMonthKey]?.paymentDate || null },
+      };
       payload = {
         ...entry,
         category: formCategory,
@@ -2110,9 +2115,11 @@ export default function App() {
               />
             </div>
           )}
-          {(addModalType === "variavel" || (addModalType === "fixa" && !editingId)) && (
+          {(addModalType === "variavel" || addModalType === "fixa") && (
             <div>
-              <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Status</label>
+              <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>
+                Status{addModalType === "fixa" ? ` em ${currentMonthLabel}` : ""}
+              </label>
               <div className="grid grid-cols-2 gap-2">
                 {[{ id: "aberto", label: "Em aberto" }, { id: "pago", label: "Pago" }].map((s) => (
                   <button
