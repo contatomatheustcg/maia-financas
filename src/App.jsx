@@ -467,13 +467,20 @@ export default function App() {
         }
         const status = def.paidMonths?.[currentMonthKey] || {};
         const dueInfo = def.dueDay ? dueDayInfo(def.dueDay, currentMonthKey) : null;
-        return { ...def, installment, paid: !!status.paid, paymentDate: status.paymentDate || null, dueInfo };
+        return {
+          ...def,
+          installment,
+          paid: !!status.paid,
+          paymentDate: status.paymentDate || null,
+          deferred: !!status.deferred,
+          dueInfo,
+        };
       })
       .filter(Boolean);
   }, [fixedExpenses, currentMonthKey]);
 
   const totalIncome = useMemo(() => monthIncome.reduce((s, i) => s + i.amountCents, 0), [monthIncome]);
-  const totalFixed = useMemo(() => activeFixedForMonth.reduce((s, i) => s + i.amountCents, 0), [activeFixedForMonth]);
+  const totalFixed = useMemo(() => activeFixedForMonth.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [activeFixedForMonth]);
   const totalVariable = useMemo(() => monthVariableExpenses.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [monthVariableExpenses]);
   const totalExpenses = totalFixed + totalVariable;
   const investAmountCents = Math.round((totalIncome * investPercent) / 100);
@@ -492,7 +499,7 @@ export default function App() {
   const FIXED_ITEM_COLORS = ["#0F9C8D", "#3D7FC9", "#E8556B", "#8B5FC9", "#E0A23C", "#B4638A"];
   const fixedBreakdown = useMemo(() => {
     return activeFixedForMonth
-      .slice()
+      .filter((e) => !e.deferred)
       .sort((a, b) => b.amountCents - a.amountCents)
       .map((e, idx) => ({ id: e.id, label: e.name, color: FIXED_ITEM_COLORS[idx % FIXED_ITEM_COLORS.length], value: e.amountCents }));
   }, [activeFixedForMonth]);
@@ -515,7 +522,7 @@ export default function App() {
       if (!byLabel[label]) byLabel[label] = { id: label, label, value: 0, color };
       byLabel[label].value += value;
     };
-    activeFixedForMonth.forEach((e) => {
+    activeFixedForMonth.filter((e) => !e.deferred).forEach((e) => {
       const cat = fixedCategories.find((c) => c.id === e.category) || fixedCategories.find((c) => c.id === "outros") || fixedCategories[fixedCategories.length - 1];
       addSlice(cat.label, e.amountCents, cat.color);
     });
@@ -539,15 +546,15 @@ export default function App() {
   const emergencyGoalMonths = 6;
 
   const subscriptionsMonthlyCents = useMemo(
-    () => activeFixedForMonth.filter((e) => e.subscription).reduce((s, e) => s + e.amountCents, 0),
+    () => activeFixedForMonth.filter((e) => e.subscription && !e.deferred).reduce((s, e) => s + e.amountCents, 0),
     [activeFixedForMonth]
   );
   const subscriptionsAnnualCents = subscriptionsMonthlyCents * 12;
-  const activeSubscriptionsCount = activeFixedForMonth.filter((e) => e.subscription).length;
+  const activeSubscriptionsCount = activeFixedForMonth.filter((e) => e.subscription && !e.deferred).length;
 
   const upcomingDue = useMemo(() => {
     return activeFixedForMonth
-      .filter((e) => e.dueDay && !e.paid)
+      .filter((e) => e.dueDay && !e.paid && !e.deferred)
       .sort((a, b) => dueSortWeight(a.dueInfo) - dueSortWeight(b.dueInfo));
   }, [activeFixedForMonth]);
 
@@ -655,6 +662,8 @@ export default function App() {
       } else if (type === "receita") {
         setFormPaymentDate(existing.receiptDate || "");
         setFormIncomeRecurring(!!existing.recurring);
+      } else if (type === "investimento") {
+        setFormPaidStatus(existing.paid ? "pago" : "aberto");
       }
     } else {
       setEditingId(null);
@@ -749,7 +758,13 @@ export default function App() {
         paidMonths,
       };
     } else if (addModalType === "investimento") {
-      payload = { ...entry, category: formCategory };
+      const paid = formPaidStatus === "pago";
+      payload = {
+        ...entry,
+        category: formCategory,
+        paid,
+        paymentDate: paid ? existingEntry.paymentDate || todayISO() : null,
+      };
     } else {
       const paid = formPaidStatus === "pago";
       payload = {
@@ -815,6 +830,19 @@ export default function App() {
       }
       return;
     }
+    if (kind === "investimento") {
+      const current = investAllocations.find((i) => i.id === id);
+      if (!current) return;
+      const nextPaid = !current.paid;
+      const nextPaymentDate = nextPaid ? todayISO() : current.paymentDate;
+      try {
+        const saved = await patchEntry("investimento", id, { paid: nextPaid, payment_date: nextPaymentDate });
+        setInvestAllocations((prev) => prev.map((i) => (i.id === id ? saved : i)));
+      } catch (e) {
+        console.error("Falha ao atualizar pagamento:", e);
+      }
+      return;
+    }
     const current = variableExpenses.find((i) => i.id === id);
     if (!current) return;
     const nextPaid = !current.paid;
@@ -856,6 +884,21 @@ export default function App() {
   }
 
   async function deferToNextMonth(kind, entryRow) {
+    if (kind === "fixa") {
+      const def = fixedExpenses.find((f) => f.id === entryRow.id);
+      if (!def) return;
+      const nextPaidMonths = {
+        ...def.paidMonths,
+        [currentMonthKey]: { ...(def.paidMonths?.[currentMonthKey] || {}), paid: false, deferred: true },
+      };
+      try {
+        const saved = await patchEntry("fixa", entryRow.id, { paid_months: nextPaidMonths });
+        setFixedExpenses((prev) => prev.map((i) => (i.id === entryRow.id ? saved : i)));
+      } catch (e) {
+        console.error("Falha ao adiar lançamento:", e);
+      }
+      return;
+    }
     if (kind !== "variavel") return;
     try {
       const updatedCurrent = await patchEntry("variavel", entryRow.id, { deferred: true });
@@ -1033,7 +1076,7 @@ export default function App() {
 
   function isRowDone(kind, r) {
     if (kind === "receita") return !!r.received;
-    if (kind === "fixa" || kind === "variavel") return !!r.paid;
+    if (kind === "fixa" || kind === "variavel" || kind === "investimento") return !!r.paid;
     return true;
   }
 
@@ -1092,7 +1135,7 @@ export default function App() {
       const amountColor = kind === "receita" ? COLORS.income : kind === "investimento" ? COLORS.invest : COLORS.expense;
       const amountSign = kind === "receita" || kind === "investimento" ? "" : "- ";
       const installmentDone = r.installment && r.installment.current >= r.installment.total;
-      const canTrackPayment = kind === "fixa" || kind === "variavel";
+      const canTrackPayment = kind === "fixa" || kind === "variavel" || kind === "investimento";
       return (
         <tr key={r.id} style={{ borderTop: `1px solid ${COLORS.cardBorder}`, opacity: r.deferred ? 0.55 : 1 }}>
           <td className="px-3 py-3">
@@ -1168,7 +1211,7 @@ export default function App() {
                   Recebido
                 </button>
               )}
-              {showActions && kind === "variavel" && !r.deferred && !r.paid && (
+              {showActions && (kind === "variavel" || kind === "fixa") && !r.deferred && !r.paid && (
                 <button
                   onClick={() => deferToNextMonth(kind, r)}
                   aria-label="Lançar para o mês seguinte"
@@ -2401,7 +2444,7 @@ export default function App() {
             <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Descrição</label>
             <TextInput value={formName} onChange={setFormName} placeholder={addModalType === "investimento" ? "Ex: Tesouro Selic" : "Ex: Aluguel"} />
           </div>
-          {(addModalType === "variavel" || addModalType === "fixa") && (
+          {(addModalType === "variavel" || addModalType === "fixa" || addModalType === "investimento") && (
             <div className={addModalType === "fixa" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : ""}>
               <div>
                 <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>
