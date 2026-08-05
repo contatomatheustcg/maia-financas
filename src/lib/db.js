@@ -108,7 +108,11 @@ function rowToCategory(row) {
 }
 
 function rowToSettings(row) {
-  return { investPercent: row.invest_percent ?? 0, categoryBudgets: row.category_budgets ?? {} };
+  return {
+    investPercent: row.invest_percent ?? 0,
+    categoryBudgets: row.category_budgets ?? {},
+    categoriesSeeded: row.categories_seeded ?? false,
+  };
 }
 
 const TABLES = {
@@ -148,7 +152,7 @@ export async function fetchAllData(userId) {
     investAllocations: investRes.data.map(rowToInvest),
     variableCategories: varCatRes.data.map(rowToCategory),
     fixedCategories: fixedCatRes.data.map(rowToCategory),
-    settings: settingsRes.data ? rowToSettings(settingsRes.data) : { investPercent: 0, categoryBudgets: {} },
+    settings: settingsRes.data ? rowToSettings(settingsRes.data) : { investPercent: 0, categoryBudgets: {}, categoriesSeeded: false },
   };
 }
 
@@ -189,13 +193,30 @@ export async function insertCategory(target, category, userId) {
   if (error) throw error;
 }
 
-export async function upsertSettings(userId, { investPercent, categoryBudgets }) {
-  const { error } = await supabase
-    .from("settings")
-    .upsert(
-      { user_id: userId, invest_percent: investPercent, category_budgets: categoryBudgets },
-      { onConflict: "user_id" }
-    );
+export async function seedCategories(target, categories, userId) {
+  if (!categories.length) return;
+  const table = target === "fixa" ? "fixed_categories" : "variable_categories";
+  const rows = categories.map((c) => ({ id: c.id, label: c.label, color: c.color, user_id: userId }));
+  const { error } = await supabase.from(table).insert(rows);
+  if (error) throw error;
+}
+
+export async function updateCategory(target, id, { label, color }, userId) {
+  const table = target === "fixa" ? "fixed_categories" : "variable_categories";
+  const { error } = await supabase.from(table).update({ label, color }).eq("id", id).eq("user_id", userId);
+  if (error) throw error;
+}
+
+export async function deleteCategory(target, id, userId) {
+  const table = target === "fixa" ? "fixed_categories" : "variable_categories";
+  const { error } = await supabase.from(table).delete().eq("id", id).eq("user_id", userId);
+  if (error) throw error;
+}
+
+export async function upsertSettings(userId, { investPercent, categoryBudgets, categoriesSeeded }) {
+  const row = { user_id: userId, invest_percent: investPercent, category_budgets: categoryBudgets };
+  if (categoriesSeeded !== undefined) row.categories_seeded = categoriesSeeded;
+  const { error } = await supabase.from("settings").upsert(row, { onConflict: "user_id" });
   if (error) throw error;
 }
 

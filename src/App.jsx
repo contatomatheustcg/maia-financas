@@ -15,7 +15,8 @@ import {
 import { supabase } from "./lib/supabaseClient";
 import {
   fetchAllData, insertEntry, updateEntry, patchEntry, deleteEntry,
-  insertCategory, upsertSettings, describeSupabaseError,
+  insertCategory, seedCategories, updateCategory, deleteCategory,
+  upsertSettings, describeSupabaseError,
 } from "./lib/db";
 
 /* ---------------------------------------------------------------------- */
@@ -274,6 +275,7 @@ export default function App() {
   const [fixedCategories, setFixedCategories] = useState(DEFAULT_FIXED_CATEGORIES);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [categoryModalTarget, setCategoryModalTarget] = useState("variavel");
+  const [categoryEditingId, setCategoryEditingId] = useState(null);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryColor, setNewCategoryColor] = useState("#6C5CE0");
   const [previousMonthSnapshot, setPreviousMonthSnapshot] = useState(null);
@@ -329,14 +331,33 @@ export default function App() {
     let cancelled = false;
     setDataLoading(true);
     fetchAllData(user.id)
-      .then((d) => {
+      .then(async (d) => {
         if (cancelled) return;
         setIncome(d.income);
         setFixedExpenses(d.fixedExpenses);
         setVariableExpenses(d.variableExpenses);
         setInvestAllocations(d.investAllocations);
-        setVariableCategories([...DEFAULT_VARIABLE_CATEGORIES, ...d.variableCategories]);
-        setFixedCategories([...DEFAULT_FIXED_CATEGORIES, ...d.fixedCategories]);
+
+        let varCats = d.variableCategories;
+        let fixedCats = d.fixedCategories;
+        // Categorias padrão só são copiadas pro banco na primeira vez — depois disso,
+        // o banco é a única fonte de verdade (permite editar/excluir até as padrão).
+        if (!d.settings.categoriesSeeded) {
+          await Promise.all([
+            seedCategories("variavel", DEFAULT_VARIABLE_CATEGORIES, user.id),
+            seedCategories("fixa", DEFAULT_FIXED_CATEGORIES, user.id),
+          ]);
+          varCats = [...DEFAULT_VARIABLE_CATEGORIES, ...varCats];
+          fixedCats = [...DEFAULT_FIXED_CATEGORIES, ...fixedCats];
+          await upsertSettings(user.id, {
+            investPercent: d.settings.investPercent,
+            categoryBudgets: d.settings.categoryBudgets,
+            categoriesSeeded: true,
+          });
+        }
+        if (cancelled) return;
+        setVariableCategories(varCats);
+        setFixedCategories(fixedCats);
         setInvestPercent(d.settings.investPercent);
         setCategoryBudgets(d.settings.categoryBudgets);
         settingsHydratedRef.current = true;
@@ -402,7 +423,7 @@ export default function App() {
     const byCat = {};
     monthVariableExpenses.filter((e) => !e.deferred).forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + e.amountCents; });
     return Object.entries(byCat)
-      .map(([catId, value]) => ({ ...(variableCategories.find((c) => c.id === catId) || variableCategories[5]), value }))
+      .map(([catId, value]) => ({ ...(variableCategories.find((c) => c.id === catId) || variableCategories.find((c) => c.id === "outros") || variableCategories[variableCategories.length - 1]), value }))
       .sort((a, b) => b.value - a.value);
   }, [monthVariableExpenses]);
 
@@ -433,11 +454,11 @@ export default function App() {
       byLabel[label].value += value;
     };
     activeFixedForMonth.forEach((e) => {
-      const cat = fixedCategories.find((c) => c.id === e.category) || fixedCategories[5];
+      const cat = fixedCategories.find((c) => c.id === e.category) || fixedCategories.find((c) => c.id === "outros") || fixedCategories[fixedCategories.length - 1];
       addSlice(cat.label, e.amountCents, cat.color);
     });
     monthVariableExpenses.filter((e) => !e.deferred).forEach((e) => {
-      const cat = variableCategories.find((c) => c.id === e.category) || variableCategories[variableCategories.length - 1];
+      const cat = variableCategories.find((c) => c.id === e.category) || variableCategories.find((c) => c.id === "outros") || variableCategories[variableCategories.length - 1];
       addSlice(cat.label, e.amountCents, cat.color);
     });
     addSlice("Investimento", investAmountCents, COLORS.invest);
@@ -740,28 +761,52 @@ export default function App() {
     }
   }
 
-  function openCategoryModal(target) {
+  function openCategoryModal(target, existing) {
     setCategoryModalTarget(target);
-    setNewCategoryName("");
-    setNewCategoryColor("#6C5CE0");
+    setCategoryEditingId(existing ? existing.id : null);
+    setNewCategoryName(existing ? existing.label : "");
+    setNewCategoryColor(existing ? existing.color : "#6C5CE0");
     setCategoryModalOpen(true);
   }
 
-  async function saveNewCategory() {
+  async function saveCategory() {
     const label = newCategoryName.trim();
     if (!label) return;
-    const newCat = { id: `custom_${uid()}`, label, color: newCategoryColor };
     try {
-      await insertCategory(categoryModalTarget, newCat, user.id);
-      if (categoryModalTarget === "fixa") {
-        setFixedCategories((prev) => [...prev, newCat]);
+      if (categoryEditingId) {
+        await updateCategory(categoryModalTarget, categoryEditingId, { label, color: newCategoryColor }, user.id);
+        const updater = (prev) => prev.map((c) => (c.id === categoryEditingId ? { ...c, label, color: newCategoryColor } : c));
+        if (categoryModalTarget === "fixa") setFixedCategories(updater);
+        else setVariableCategories(updater);
       } else {
-        setVariableCategories((prev) => [...prev, newCat]);
+        const newCat = { id: `custom_${uid()}`, label, color: newCategoryColor };
+        await insertCategory(categoryModalTarget, newCat, user.id);
+        if (categoryModalTarget === "fixa") {
+          setFixedCategories((prev) => [...prev, newCat]);
+        } else {
+          setVariableCategories((prev) => [...prev, newCat]);
+        }
+        setFormCategory(newCat.id);
       }
-      setFormCategory(newCat.id);
       setCategoryModalOpen(false);
     } catch (e) {
-      console.error("Falha ao criar categoria:", e);
+      console.error("Falha ao salvar categoria:", e);
+    }
+  }
+
+  async function deleteCategoryHandler() {
+    if (!categoryEditingId) return;
+    try {
+      await deleteCategory(categoryModalTarget, categoryEditingId, user.id);
+      const remover = (prev) => prev.filter((c) => c.id !== categoryEditingId);
+      if (categoryModalTarget === "fixa") setFixedCategories(remover);
+      else setVariableCategories(remover);
+      if (formCategory === categoryEditingId) {
+        setFormCategory(categoryModalTarget === "fixa" ? "moradia" : "mercado");
+      }
+      setCategoryModalOpen(false);
+    } catch (e) {
+      console.error("Falha ao excluir categoria:", e);
     }
   }
 
@@ -2084,15 +2129,27 @@ export default function App() {
                 <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Categoria</label>
                 <div className="flex flex-wrap gap-2">
                   {fixedCategories.map((c) => (
-                    <button
+                    <div
                       key={c.id}
-                      onClick={() => setFormCategory(c.id)}
-                      className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-full"
+                      className="flex items-center rounded-full"
                       style={formCategory === c.id ? { background: c.color, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
                     >
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: formCategory === c.id ? "#fff" : c.color }} />
-                      {c.label}
-                    </button>
+                      <button
+                        onClick={() => setFormCategory(c.id)}
+                        className="flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1 py-1.5 rounded-full"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: formCategory === c.id ? "#fff" : c.color }} />
+                        {c.label}
+                      </button>
+                      <button
+                        onClick={() => openCategoryModal("fixa", c)}
+                        aria-label={`Editar categoria ${c.label}`}
+                        className="pr-2 pl-0.5 py-1.5 rounded-full"
+                        style={{ opacity: formCategory === c.id ? 0.85 : 0.6 }}
+                      >
+                        <Pencil size={10} />
+                      </button>
+                    </div>
                   ))}
                   <button
                     onClick={() => openCategoryModal("fixa")}
@@ -2174,15 +2231,27 @@ export default function App() {
               <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Categoria</label>
               <div className="flex flex-wrap gap-2">
                 {variableCategories.map((c) => (
-                  <button
+                  <div
                     key={c.id}
-                    onClick={() => setFormCategory(c.id)}
-                    className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-full"
+                    className="flex items-center rounded-full"
                     style={formCategory === c.id ? { background: c.color, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
                   >
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: formCategory === c.id ? "#fff" : c.color }} />
-                    {c.label}
-                  </button>
+                    <button
+                      onClick={() => setFormCategory(c.id)}
+                      className="flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1 py-1.5 rounded-full"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: formCategory === c.id ? "#fff" : c.color }} />
+                      {c.label}
+                    </button>
+                    <button
+                      onClick={() => openCategoryModal("variavel", c)}
+                      aria-label={`Editar categoria ${c.label}`}
+                      className="pr-2 pl-0.5 py-1.5 rounded-full"
+                      style={{ opacity: formCategory === c.id ? 0.85 : 0.6 }}
+                    >
+                      <Pencil size={10} />
+                    </button>
+                  </div>
                 ))}
                 <button
                   onClick={() => openCategoryModal("variavel")}
@@ -2229,11 +2298,11 @@ export default function App() {
         </div>
       </Modal>
 
-      {/* new category modal */}
+      {/* category modal (create / edit) */}
       <Modal
         open={categoryModalOpen}
         onClose={() => setCategoryModalOpen(false)}
-        title="Nova categoria"
+        title={categoryEditingId ? "Editar categoria" : "Nova categoria"}
         subtitle={categoryModalTarget === "fixa" ? "Pra despesas fixas." : "Pra despesas variáveis."}
       >
         <div className="space-y-3 mb-5">
@@ -2262,8 +2331,15 @@ export default function App() {
           </div>
         </div>
         <div className="flex gap-2">
+          {categoryEditingId && (
+            <button onClick={deleteCategoryHandler} className="p-2.5 rounded-xl" style={{ background: COLORS.expenseSoft }} aria-label="Excluir categoria">
+              <Trash2 size={18} style={{ color: COLORS.expense }} />
+            </button>
+          )}
           <button onClick={() => setCategoryModalOpen(false)} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.page, color: COLORS.ink600 }}>Cancelar</button>
-          <button onClick={saveNewCategory} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.ink900, color: "#fff" }}>Criar categoria</button>
+          <button onClick={saveCategory} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.ink900, color: "#fff" }}>
+            {categoryEditingId ? "Salvar" : "Criar categoria"}
+          </button>
         </div>
       </Modal>
     </div>
