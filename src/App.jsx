@@ -547,7 +547,9 @@ export default function App() {
     const existingEntry = editingId
       ? (income.find((i) => i.id === editingId) || fixedExpenses.find((i) => i.id === editingId) || variableExpenses.find((i) => i.id === editingId) || investAllocations.find((i) => i.id === editingId) || {})
       : {};
-    const entry = { name: formName.trim(), amountCents: formAmountCents, date: existingEntry.date || todayShort() };
+    const showsDatePicker = addModalType === "receita" || addModalType === "fixa" || addModalType === "variavel";
+    const pickedDate = showsDatePicker && formPaymentDate ? formatDateShort(formPaymentDate) : null;
+    const entry = { name: formName.trim(), amountCents: formAmountCents, date: pickedDate || existingEntry.date || todayShort() };
     let payload;
     if (addModalType === "receita") {
       payload = {
