@@ -134,19 +134,46 @@ function monthsBetween(fromKey, toKey) {
   return (ty - fy) * 12 + (tm - fm);
 }
 
-function daysUntilDue(dueDay) {
+function dueDayInfo(dueDay, monthKey) {
   if (!dueDay) return null;
-  const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  let diff = dueDay - now.getDate();
-  if (diff < 0) diff += daysInMonth;
-  return diff;
+  const realTodayKey = monthKeyFromOffset(0);
+  if (monthKey < realTodayKey) return { kind: "overdue", dueDay };
+  if (monthKey > realTodayKey) return { kind: "future", dueDay };
+  const diff = dueDay - new Date().getDate();
+  if (diff < 0) return { kind: "overdue", dueDay };
+  if (diff === 0) return { kind: "today", dueDay };
+  return { kind: "soon", dueDay, daysLeft: diff };
 }
 
-function dueLabel(days) {
-  if (days === 0) return "Vence hoje";
-  if (days === 1) return "Vence amanhã";
-  return `Vence em ${days} dias`;
+function dueLabel(info) {
+  if (!info) return "";
+  if (info.kind === "overdue") return "Vencido";
+  if (info.kind === "today") return "Vence hoje";
+  if (info.kind === "future") return `Vence dia ${info.dueDay}`;
+  if (info.daysLeft === 1) return "Vence amanhã";
+  return `Vence em ${info.daysLeft} dias`;
+}
+
+function dueColor(info) {
+  if (!info) return COLORS.ink400;
+  if (info.kind === "overdue" || info.kind === "today") return COLORS.expense;
+  if (info.kind === "soon") return info.daysLeft <= 3 ? COLORS.expense : info.daysLeft <= 7 ? COLORS.invest : COLORS.ink400;
+  return COLORS.ink400;
+}
+
+function dueBg(info) {
+  if (!info) return COLORS.page;
+  if (info.kind === "overdue" || info.kind === "today") return COLORS.expenseSoft;
+  if (info.kind === "soon") return info.daysLeft <= 3 ? COLORS.expenseSoft : info.daysLeft <= 7 ? COLORS.investSoft : COLORS.page;
+  return COLORS.page;
+}
+
+function dueSortWeight(info) {
+  if (!info) return Infinity;
+  if (info.kind === "overdue") return -1;
+  if (info.kind === "today") return 0;
+  if (info.kind === "soon") return info.daysLeft;
+  return 1000 + (info.dueDay || 0);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -262,6 +289,7 @@ export default function App() {
   const [section, setSection] = useState("overview");
   const [budgetTab, setBudgetTab] = useState("variavel");
   const [hideAmounts, setHideAmounts] = useState(false);
+  const [now, setNow] = useState(() => new Date());
   const [monthOffset, setMonthOffset] = useState(0);
   const currentMonthKey = monthKeyFromOffset(monthOffset);
   const currentMonthLabel = monthLabelFromOffset(monthOffset);
@@ -399,6 +427,13 @@ export default function App() {
     return () => clearTimeout(handle);
   }, [investPercent, categoryBudgets, user?.id]);
 
+  /* -------------------------- live clock -------------------------- */
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   /* -------------------------- derived totals -------------------------- */
 
   const monthIncome = useMemo(
@@ -421,7 +456,8 @@ export default function App() {
           installment = { current: effectiveCurrent, total: installment.total };
         }
         const status = def.paidMonths?.[currentMonthKey] || {};
-        return { ...def, installment, paid: !!status.paid, paymentDate: status.paymentDate || null };
+        const dueInfo = def.dueDay ? dueDayInfo(def.dueDay, currentMonthKey) : null;
+        return { ...def, installment, paid: !!status.paid, paymentDate: status.paymentDate || null, dueInfo };
       })
       .filter(Boolean);
   }, [fixedExpenses, currentMonthKey]);
@@ -502,8 +538,7 @@ export default function App() {
   const upcomingDue = useMemo(() => {
     return activeFixedForMonth
       .filter((e) => e.dueDay && !e.paid)
-      .map((e) => ({ ...e, daysLeft: daysUntilDue(e.dueDay) }))
-      .sort((a, b) => a.daysLeft - b.daysLeft);
+      .sort((a, b) => dueSortWeight(a.dueInfo) - dueSortWeight(b.dueInfo));
   }, [activeFixedForMonth]);
 
   const projectedFutureValueCents = useMemo(() => {
@@ -1036,8 +1071,8 @@ export default function App() {
                   </span>
                 )}
                 {r.dueDay && !r.paid && !r.deferred && (
-                  <span className="text-[10px] font-medium block" style={{ color: daysUntilDue(r.dueDay) <= 3 ? COLORS.expense : daysUntilDue(r.dueDay) <= 7 ? COLORS.invest : COLORS.ink400 }}>
-                    {dueLabel(daysUntilDue(r.dueDay))}
+                  <span className="text-[10px] font-medium block" style={{ color: dueColor(r.dueInfo) }}>
+                    {dueLabel(r.dueInfo)}
                   </span>
                 )}
                 {canTrackPayment && r.paid && (
@@ -1443,6 +1478,10 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-3">
+                <div className="hidden md:flex items-center gap-1.5 text-xs font-medium tabular-nums" style={{ color: "rgba(255,255,255,0.6)" }}>
+                  <CalendarClock size={14} />
+                  {now.toLocaleDateString("pt-BR")} · {now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </div>
                 <div className="hidden sm:flex items-center gap-2 rounded-full px-3 py-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
                   <Search size={13} color="rgba(255,255,255,0.5)" />
                   <input
@@ -1718,19 +1757,14 @@ export default function App() {
                 <p className="text-xs" style={{ color: COLORS.ink400 }}>Nenhuma despesa fixa com dia de vencimento definido.</p>
               ) : (
                 <div className="space-y-3">
-                  {upcomingDue.map((e) => {
-                    const urgent = e.daysLeft <= 3;
-                    const soon = e.daysLeft <= 7;
-                    const color = urgent ? COLORS.expense : soon ? COLORS.invest : COLORS.ink400;
-                    return (
-                      <div key={e.id} className="flex items-center justify-between">
-                        <span className="text-xs truncate" style={{ color: COLORS.ink900 }}>{e.name}</span>
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ background: urgent ? COLORS.expenseSoft : soon ? COLORS.investSoft : COLORS.page, color }}>
-                          {dueLabel(e.daysLeft)}
-                        </span>
-                      </div>
-                    );
-                  })}
+                  {upcomingDue.map((e) => (
+                    <div key={e.id} className="flex items-center justify-between">
+                      <span className="text-xs truncate" style={{ color: COLORS.ink900 }}>{e.name}</span>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ background: dueBg(e.dueInfo), color: dueColor(e.dueInfo) }}>
+                        {dueLabel(e.dueInfo)}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
