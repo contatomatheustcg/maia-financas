@@ -2093,45 +2093,64 @@ export default function App() {
         subtitle={addModalType === "fixa" ? "Vale deste mês em diante." : addModalType === "investimento" ? "Registre onde esse valor foi investido." : undefined}
       >
         <div className="space-y-3 mb-5">
-          <div>
-            <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Valor</label>
-            <CurrencyInput valueCents={formAmountCents} onChange={setFormAmountCents} autoFocus />
+          <div className={addModalType === "investimento" ? "" : "grid grid-cols-1 sm:grid-cols-2 gap-3"}>
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Valor</label>
+              <CurrencyInput valueCents={formAmountCents} onChange={setFormAmountCents} autoFocus />
+            </div>
+            {(addModalType === "receita" || addModalType === "fixa" || addModalType === "variavel") && (
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>
+                  {addModalType === "receita" ? "Data de recebimento (opcional)" : "Data de pagamento (opcional)"}
+                </label>
+                <input
+                  type="date"
+                  value={formPaymentDate}
+                  onChange={(e) => setFormPaymentDate(e.target.value)}
+                  className="w-full rounded-xl px-3 py-2.5 outline-none text-base"
+                  style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}`, color: COLORS.ink900 }}
+                />
+              </div>
+            )}
           </div>
           <div>
             <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Descrição</label>
             <TextInput value={formName} onChange={setFormName} placeholder={addModalType === "investimento" ? "Ex: Tesouro Selic" : "Ex: Aluguel"} />
           </div>
-          {(addModalType === "receita" || addModalType === "fixa" || addModalType === "variavel") && (
-            <div>
-              <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>
-                {addModalType === "receita" ? "Data de recebimento (opcional)" : "Data de pagamento (opcional)"}
-              </label>
-              <input
-                type="date"
-                value={formPaymentDate}
-                onChange={(e) => setFormPaymentDate(e.target.value)}
-                className="w-full rounded-xl px-3 py-2.5 outline-none text-base"
-                style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}`, color: COLORS.ink900 }}
-              />
-            </div>
-          )}
           {(addModalType === "variavel" || addModalType === "fixa") && (
-            <div>
-              <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>
-                Status{addModalType === "fixa" ? ` em ${currentMonthLabel}` : ""}
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {[{ id: "aberto", label: "Em aberto" }, { id: "pago", label: "Pago" }].map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => setFormPaidStatus(s.id)}
-                    className="text-xs font-medium py-2 rounded-xl"
-                    style={formPaidStatus === s.id ? { background: COLORS.ink900, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
-                  >
-                    {s.label}
-                  </button>
-                ))}
+            <div className={addModalType === "fixa" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : ""}>
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>
+                  Status{addModalType === "fixa" ? ` em ${currentMonthLabel}` : ""}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[{ id: "aberto", label: "Em aberto" }, { id: "pago", label: "Pago" }].map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => setFormPaidStatus(s.id)}
+                      className="text-xs font-medium py-2 rounded-xl"
+                      style={formPaidStatus === s.id ? { background: COLORS.ink900, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
               </div>
+              {addModalType === "fixa" && (
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Dia do vencimento</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={formDueDay}
+                    onChange={(e) => setFormDueDay(e.target.value)}
+                    placeholder="Ex: 10"
+                    className="w-full rounded-xl px-3 py-2.5 outline-none text-base"
+                    style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}`, color: COLORS.ink900 }}
+                  />
+                </div>
+              )}
             </div>
           )}
           {addModalType === "receita" && (
@@ -2239,20 +2258,6 @@ export default function App() {
                   Vai continuar cobrando todo mês até você marcar como cancelada.
                 </p>
               )}
-              <div>
-                <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Dia do vencimento</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={formDueDay}
-                  onChange={(e) => setFormDueDay(e.target.value)}
-                  placeholder="Ex: 10"
-                  className="w-full rounded-xl px-3 py-2.5 outline-none text-base"
-                  style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}`, color: COLORS.ink900 }}
-                />
-                <p className="text-[11px] mt-1" style={{ color: COLORS.ink400 }}>Ela se repete todo mês nesse dia.</p>
-              </div>
             </>
           )}
           {addModalType === "variavel" && (
