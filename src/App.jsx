@@ -723,7 +723,8 @@ export default function App() {
       if (recurring) {
         payload.startMonth = editingId ? existingEntry.startMonth || currentMonthKey : currentMonthKey;
         payload.receivedMonths = editingId ? existingEntry.receivedMonths || {} : {};
-        payload.referenceMonth = null;
+        // reference_month não é usado por receitas recorrentes, mas a coluna não aceita nulo
+        payload.referenceMonth = payload.startMonth;
         payload.receiptDate = null;
         payload.received = false;
       } else {
