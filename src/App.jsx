@@ -15,7 +15,7 @@ import {
   Eye, EyeOff, Bell, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, X,
   Search, TrendingUp, TrendingDown, Target, PieChart as PieIcon, Diamond,
   Mail, Lock, LogOut, Shield, Calendar, RefreshCw, ArrowUpRight, ArrowDownRight, Save, Sparkles,
-  Check, SkipForward, CalendarClock,
+  Check, SkipForward, CalendarClock, Settings,
 } from "lucide-react";
 import { supabase } from "./lib/supabaseClient";
 import {
@@ -269,6 +269,15 @@ export default function App() {
   const user = session?.user || null;
   const isAuthenticated = !!session;
   const userName = user?.user_metadata?.name || (user?.email ? user.email.split("@")[0] : "");
+
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [settingsName, setSettingsName] = useState("");
+  const [settingsNewPassword, setSettingsNewPassword] = useState("");
+  const [settingsConfirmPassword, setSettingsConfirmPassword] = useState("");
+  const [settingsShowPassword, setSettingsShowPassword] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsSuccess, setSettingsSuccess] = useState("");
+  const [settingsSaving, setSettingsSaving] = useState(false);
 
   const [authView, setAuthView] = useState("login");
   const [loginEmail, setLoginEmail] = useState("");
@@ -1075,6 +1084,46 @@ export default function App() {
     setAuthView("login");
   }
 
+  function openSettingsModal() {
+    setSettingsName(userName);
+    setSettingsNewPassword("");
+    setSettingsConfirmPassword("");
+    setSettingsError("");
+    setSettingsSuccess("");
+    setSettingsModalOpen(true);
+  }
+
+  async function saveSettings() {
+    if (!settingsName.trim()) {
+      setSettingsError("Digite um nome.");
+      return;
+    }
+    if (settingsNewPassword || settingsConfirmPassword) {
+      if (settingsNewPassword.length < 6) {
+        setSettingsError("A nova senha precisa ter pelo menos 6 caracteres.");
+        return;
+      }
+      if (settingsNewPassword !== settingsConfirmPassword) {
+        setSettingsError("As senhas não coincidem.");
+        return;
+      }
+    }
+    setSettingsError("");
+    setSettingsSuccess("");
+    setSettingsSaving(true);
+    const updates = { data: { name: settingsName.trim() } };
+    if (settingsNewPassword) updates.password = settingsNewPassword;
+    const { error } = await supabase.auth.updateUser(updates);
+    setSettingsSaving(false);
+    if (error) {
+      setSettingsError(describeSupabaseError(error));
+      return;
+    }
+    setSettingsNewPassword("");
+    setSettingsConfirmPassword("");
+    setSettingsSuccess("Salvo!");
+  }
+
   function isRowDone(kind, r) {
     if (kind === "receita") return !!r.received;
     if (kind === "fixa" || kind === "variavel" || kind === "investimento") return !!r.paid;
@@ -1587,6 +1636,9 @@ export default function App() {
                   {hideAmounts ? <EyeOff size={16} color="rgba(255,255,255,0.7)" /> : <Eye size={16} color="rgba(255,255,255,0.7)" />}
                 </button>
                 <Bell size={16} color="rgba(255,255,255,0.7)" />
+                <button onClick={openSettingsModal} aria-label="Configurações">
+                  <Settings size={16} color="rgba(255,255,255,0.7)" />
+                </button>
                 <button onClick={handleLogout} aria-label="Sair">
                   <LogOut size={16} color="rgba(255,255,255,0.7)" />
                 </button>
@@ -2721,6 +2773,58 @@ export default function App() {
           <button onClick={() => setCategoryModalOpen(false)} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.page, color: COLORS.ink600 }}>Cancelar</button>
           <button onClick={saveCategory} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: COLORS.ink900, color: "#fff" }}>
             {categoryEditingId ? "Salvar" : "Criar categoria"}
+          </button>
+        </div>
+      </Modal>
+
+      {/* settings modal */}
+      <Modal open={settingsModalOpen} onClose={() => setSettingsModalOpen(false)} title="Configurações" subtitle="Nome de exibição e senha da sua conta.">
+        <div className="space-y-3 mb-5">
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Nome de exibição</label>
+            <TextInput value={settingsName} onChange={setSettingsName} placeholder="Seu nome" />
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Nova senha (opcional)</label>
+            <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}` }}>
+              <Lock size={15} color={COLORS.ink400} />
+              <input
+                type={settingsShowPassword ? "text" : "password"}
+                value={settingsNewPassword}
+                onChange={(e) => setSettingsNewPassword(e.target.value)}
+                placeholder="Deixe em branco pra manter"
+                className="w-full bg-transparent outline-none text-sm"
+                style={{ color: COLORS.ink900 }}
+              />
+              <button type="button" onClick={() => setSettingsShowPassword((v) => !v)} aria-label={settingsShowPassword ? "Ocultar senha" : "Mostrar senha"}>
+                {settingsShowPassword ? <EyeOff size={15} color={COLORS.ink400} /> : <Eye size={15} color={COLORS.ink400} />}
+              </button>
+            </div>
+          </div>
+          {settingsNewPassword && (
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Confirmar nova senha</label>
+              <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}` }}>
+                <Lock size={15} color={COLORS.ink400} />
+                <input
+                  type={settingsShowPassword ? "text" : "password"}
+                  value={settingsConfirmPassword}
+                  onChange={(e) => setSettingsConfirmPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveSettings(); }}
+                  placeholder="Repita a nova senha"
+                  className="w-full bg-transparent outline-none text-sm"
+                  style={{ color: COLORS.ink900 }}
+                />
+              </div>
+            </div>
+          )}
+          {settingsError && <p className="text-xs font-medium" style={{ color: COLORS.expense }}>{settingsError}</p>}
+          {settingsSuccess && <p className="text-xs font-medium" style={{ color: COLORS.income }}>{settingsSuccess}</p>}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => setSettingsModalOpen(false)} disabled={settingsSaving} className="flex-1 py-2.5 rounded-xl text-sm font-medium disabled:opacity-60" style={{ background: COLORS.page, color: COLORS.ink600 }}>Fechar</button>
+          <button onClick={saveSettings} disabled={settingsSaving} className="flex-1 py-2.5 rounded-xl text-sm font-medium disabled:opacity-60" style={{ background: COLORS.ink900, color: "#fff" }}>
+            {settingsSaving ? "Salvando..." : "Salvar"}
           </button>
         </div>
       </Modal>
