@@ -134,6 +134,16 @@ function monthsBetween(fromKey, toKey) {
   return (ty - fy) * 12 + (tm - fm);
 }
 
+// Reaplica o dia de um lançamento recorrente ("date" no formato dd/mm) dentro do mês
+// visualizado, em vez de deixar preso pra sempre no mês em que foi criado.
+function projectDateToMonth(dateStr, monthKey) {
+  if (!dateStr || !monthKey) return dateStr;
+  const day = dateStr.split("/")[0];
+  const month = monthKey.split("-")[1];
+  if (!day || !month) return dateStr;
+  return `${day}/${month}`;
+}
+
 function dueDayInfo(dueDay, monthKey) {
   if (!dueDay) return null;
   const realTodayKey = monthKeyFromOffset(0);
@@ -455,7 +465,12 @@ export default function App() {
         const offset = monthsBetween(inc.startMonth, currentMonthKey);
         if (offset < 0) return null;
         const status = inc.receivedMonths?.[currentMonthKey] || {};
-        return { ...inc, received: !!status.received, receiptDate: status.receiptDate || null };
+        return {
+          ...inc,
+          received: !!status.received,
+          receiptDate: status.receiptDate || null,
+          date: projectDateToMonth(inc.date, currentMonthKey),
+        };
       })
       .filter(Boolean);
   }, [income, currentMonthKey]);
@@ -483,6 +498,7 @@ export default function App() {
           paymentDate: status.paymentDate || null,
           deferred: !!status.deferred,
           dueInfo,
+          date: projectDateToMonth(def.date, currentMonthKey),
         };
       })
       .filter(Boolean);
