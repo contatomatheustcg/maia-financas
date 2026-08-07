@@ -277,6 +277,41 @@ function TextInput({ value, onChange, placeholder }) {
   );
 }
 
+function CategorySelect({ categories, value, onChange, onCreateNew, onEditCurrent }) {
+  const selected = categories.find((c) => c.id === value);
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 flex-1 min-w-0" style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}` }}>
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: selected ? selected.color : COLORS.ink400 }} />
+        <select
+          value={value}
+          onChange={(e) => {
+            if (e.target.value === "__new__") { onCreateNew(); return; }
+            onChange(e.target.value);
+          }}
+          className="w-full bg-transparent outline-none text-sm"
+          style={{ color: COLORS.ink900 }}
+        >
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.label}</option>
+          ))}
+          <option value="__new__">+ Nova categoria...</option>
+        </select>
+      </div>
+      <button
+        type="button"
+        onClick={onEditCurrent}
+        disabled={!selected}
+        aria-label="Editar categoria"
+        className="p-2.5 rounded-xl shrink-0 disabled:opacity-40"
+        style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}` }}
+      >
+        <Pencil size={14} style={{ color: COLORS.ink400 }} />
+      </button>
+    </div>
+  );
+}
+
 function StatCard({ icon, iconBg, iconColor, label, value, hide, footer }) {
   return (
     <div className="rounded-2xl p-4" style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}` }}>
@@ -2732,59 +2767,30 @@ export default function App() {
           )}
           {addModalType === "fixa" && (
             <>
-              <div>
-                <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Categoria</label>
-                <div className="flex flex-wrap gap-2">
-                  {fixedCategories.map((c) => (
-                    <div
-                      key={c.id}
-                      className="flex items-center rounded-full"
-                      style={formCategory === c.id ? { background: c.color, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
-                    >
-                      <button
-                        onClick={() => setFormCategory(c.id)}
-                        className="flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1 py-1.5 rounded-full"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: formCategory === c.id ? "#fff" : c.color }} />
-                        {c.label}
-                      </button>
-                      <button
-                        onClick={() => openCategoryModal("fixa", c)}
-                        aria-label={`Editar categoria ${c.label}`}
-                        className="pr-2 pl-0.5 py-1.5 rounded-full"
-                        style={{ opacity: formCategory === c.id ? 0.85 : 0.6 }}
-                      >
-                        <Pencil size={10} />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => openCategoryModal("fixa")}
-                    className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full"
-                    style={{ background: COLORS.page, color: COLORS.primary, border: `1px dashed ${COLORS.primary}` }}
-                  >
-                    <Plus size={12} /> Nova categoria
-                  </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Categoria</label>
+                  <CategorySelect
+                    categories={fixedCategories}
+                    value={formCategory}
+                    onChange={setFormCategory}
+                    onCreateNew={() => openCategoryModal("fixa")}
+                    onEditCurrent={() => openCategoryModal("fixa", fixedCategories.find((c) => c.id === formCategory))}
+                  />
                 </div>
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Tipo</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { id: "fixo", label: "Fixo" },
-                    { id: "parcelado", label: "Parcelado" },
-                    { id: "assinatura", label: "Assinatura" },
-                    { id: "semanal", label: "Semanal" },
-                  ].map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => setFormRecurrenceType(t.id)}
-                      className="text-xs font-medium py-2 rounded-xl"
-                      style={formRecurrenceType === t.id ? { background: COLORS.ink900, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Tipo</label>
+                  <select
+                    value={formRecurrenceType}
+                    onChange={(e) => setFormRecurrenceType(e.target.value)}
+                    className="w-full rounded-xl px-3 py-2.5 outline-none text-sm"
+                    style={{ background: COLORS.page, border: `1px solid ${COLORS.cardBorder}`, color: COLORS.ink900 }}
+                  >
+                    <option value="fixo">Fixo</option>
+                    <option value="parcelado">Parcelado</option>
+                    <option value="assinatura">Assinatura</option>
+                    <option value="semanal">Semanal</option>
+                  </select>
                 </div>
               </div>
               {formRecurrenceType === "parcelado" && (
@@ -2841,38 +2847,13 @@ export default function App() {
           {addModalType === "variavel" && (
             <div>
               <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Categoria</label>
-              <div className="flex flex-wrap gap-2">
-                {variableCategories.map((c) => (
-                  <div
-                    key={c.id}
-                    className="flex items-center rounded-full"
-                    style={formCategory === c.id ? { background: c.color, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
-                  >
-                    <button
-                      onClick={() => setFormCategory(c.id)}
-                      className="flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1 py-1.5 rounded-full"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: formCategory === c.id ? "#fff" : c.color }} />
-                      {c.label}
-                    </button>
-                    <button
-                      onClick={() => openCategoryModal("variavel", c)}
-                      aria-label={`Editar categoria ${c.label}`}
-                      className="pr-2 pl-0.5 py-1.5 rounded-full"
-                      style={{ opacity: formCategory === c.id ? 0.85 : 0.6 }}
-                    >
-                      <Pencil size={10} />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  onClick={() => openCategoryModal("variavel")}
-                  className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full"
-                  style={{ background: COLORS.page, color: COLORS.primary, border: `1px dashed ${COLORS.primary}` }}
-                >
-                  <Plus size={12} /> Nova categoria
-                </button>
-              </div>
+              <CategorySelect
+                categories={variableCategories}
+                value={formCategory}
+                onChange={setFormCategory}
+                onCreateNew={() => openCategoryModal("variavel")}
+                onEditCurrent={() => openCategoryModal("variavel", variableCategories.find((c) => c.id === formCategory))}
+              />
             </div>
           )}
           {addModalType === "investimento" && (
