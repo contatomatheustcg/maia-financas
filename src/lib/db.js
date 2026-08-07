@@ -119,8 +119,7 @@ function rowToCategory(row) {
 
 function rowToSettings(row) {
   return {
-    // numeric columns come back from PostgREST as strings to avoid float precision loss
-    investPercent: row.invest_percent != null ? parseFloat(row.invest_percent) : 0,
+    investPercentByMonth: row.invest_percent_by_month || {},
     categoryBudgets: row.category_budgets ?? {},
     categoriesSeeded: row.categories_seeded ?? false,
   };
@@ -163,7 +162,7 @@ export async function fetchAllData(userId) {
     investAllocations: investRes.data.map(rowToInvest),
     variableCategories: varCatRes.data.map(rowToCategory),
     fixedCategories: fixedCatRes.data.map(rowToCategory),
-    settings: settingsRes.data ? rowToSettings(settingsRes.data) : { investPercent: 0, categoryBudgets: {}, categoriesSeeded: false },
+    settings: settingsRes.data ? rowToSettings(settingsRes.data) : { investPercentByMonth: {}, categoryBudgets: {}, categoriesSeeded: false },
   };
 }
 
@@ -224,8 +223,8 @@ export async function deleteCategory(target, id, userId) {
   if (error) throw error;
 }
 
-export async function upsertSettings(userId, { investPercent, categoryBudgets, categoriesSeeded }) {
-  const row = { user_id: userId, invest_percent: investPercent, category_budgets: categoryBudgets };
+export async function upsertSettings(userId, { investPercentByMonth, categoryBudgets, categoriesSeeded }) {
+  const row = { user_id: userId, invest_percent_by_month: investPercentByMonth, category_budgets: categoryBudgets };
   if (categoriesSeeded !== undefined) row.categories_seeded = categoriesSeeded;
   const { error } = await supabase.from("settings").upsert(row, { onConflict: "user_id" });
   if (error) throw error;

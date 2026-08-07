@@ -134,6 +134,16 @@ function monthsBetween(fromKey, toKey) {
   return (ty - fy) * 12 + (tm - fm);
 }
 
+// O % de investimento vale a partir do mês em que foi definido até o próximo ajuste
+// (não é um valor único global) — resolve pro ajuste mais recente <= o mês visualizado.
+function resolveInvestPercentForMonth(percentByMonth, monthKey) {
+  if (!percentByMonth || !monthKey) return 0;
+  if (percentByMonth[monthKey] !== undefined) return percentByMonth[monthKey];
+  const keys = Object.keys(percentByMonth).filter((k) => k <= monthKey).sort();
+  if (keys.length === 0) return 0;
+  return percentByMonth[keys[keys.length - 1]];
+}
+
 function monthKeysInRange(fromKey, toKey) {
   if (!fromKey || !toKey) return [];
   let [y, m] = fromKey.split("-").map(Number);
@@ -333,7 +343,7 @@ export default function App() {
   const [fixedExpenses, setFixedExpenses] = useState([]);
   const [variableExpenses, setVariableExpenses] = useState([]);
 
-  const [investPercent, setInvestPercent] = useState(0);
+  const [investPercentByMonth, setInvestPercentByMonth] = useState({});
   const [investModalOpen, setInvestModalOpen] = useState(false);
   const [tempInvestPercent, setTempInvestPercent] = useState(0);
   const [tempInvestAmountCents, setTempInvestAmountCents] = useState(0);
@@ -402,7 +412,7 @@ export default function App() {
       setInvestAllocations([]);
       setVariableCategories(DEFAULT_VARIABLE_CATEGORIES);
       setFixedCategories(DEFAULT_FIXED_CATEGORIES);
-      setInvestPercent(0);
+      setInvestPercentByMonth({});
       setCategoryBudgets({});
       settingsHydratedRef.current = false;
       return;
@@ -429,7 +439,7 @@ export default function App() {
           varCats = [...DEFAULT_VARIABLE_CATEGORIES, ...varCats];
           fixedCats = [...DEFAULT_FIXED_CATEGORIES, ...fixedCats];
           await upsertSettings(user.id, {
-            investPercent: d.settings.investPercent,
+            investPercentByMonth: d.settings.investPercentByMonth,
             categoryBudgets: d.settings.categoryBudgets,
             categoriesSeeded: true,
           });
@@ -437,7 +447,7 @@ export default function App() {
         if (cancelled) return;
         setVariableCategories(varCats);
         setFixedCategories(fixedCats);
-        setInvestPercent(d.settings.investPercent);
+        setInvestPercentByMonth(d.settings.investPercentByMonth);
         setCategoryBudgets(d.settings.categoryBudgets);
         settingsHydratedRef.current = true;
       })
@@ -455,12 +465,12 @@ export default function App() {
   useEffect(() => {
     if (!user || !settingsHydratedRef.current) return;
     const handle = setTimeout(() => {
-      upsertSettings(user.id, { investPercent, categoryBudgets }).catch((e) =>
+      upsertSettings(user.id, { investPercentByMonth, categoryBudgets }).catch((e) =>
         console.error("Falha ao salvar configurações:", e)
       );
     }, 600);
     return () => clearTimeout(handle);
-  }, [investPercent, categoryBudgets, user?.id]);
+  }, [investPercentByMonth, categoryBudgets, user?.id]);
 
   /* -------------------------- live clock -------------------------- */
 
@@ -540,6 +550,7 @@ export default function App() {
   const totalFixed = useMemo(() => activeFixedForMonth.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [activeFixedForMonth]);
   const totalVariable = useMemo(() => monthVariableExpenses.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [monthVariableExpenses]);
   const totalExpenses = totalFixed + totalVariable;
+  const investPercent = resolveInvestPercentForMonth(investPercentByMonth, currentMonthKey);
   const investAmountCents = Math.round((totalIncome * investPercent) / 100);
   const saldoCents = totalIncome - investAmountCents - totalExpenses;
   const expensePercentOfIncome = totalIncome > 0 ? Math.round((totalExpenses / totalIncome) * 100) : 0;
@@ -1066,7 +1077,10 @@ export default function App() {
     setInvestAmountEditing(false);
     setInvestModalOpen(true);
   }
-  function saveInvest() { setInvestPercent(tempInvestPercent); setInvestModalOpen(false); }
+  function saveInvest() {
+    setInvestPercentByMonth((prev) => ({ ...prev, [currentMonthKey]: tempInvestPercent }));
+    setInvestModalOpen(false);
+  }
 
   function setInvestPercentFromSlider(p) {
     setTempInvestPercent(p);
@@ -2491,7 +2505,7 @@ export default function App() {
       </div>
 
       {/* invest modal */}
-      <Modal open={investModalOpen} onClose={() => setInvestModalOpen(false)} title="Investir" subtitle="Quanto da sua receita você reserva pra investir.">
+      <Modal open={investModalOpen} onClose={() => setInvestModalOpen(false)} title="Investir" subtitle={`Quanto da sua receita você reserva pra investir. Vale a partir de ${currentMonthLabel}, até você ajustar de novo.`}>
         <div className="text-center mb-3">
           <span className="text-4xl font-bold" style={{ color: COLORS.invest }}>{formatPercent(tempInvestPercent)}%</span>
         </div>
