@@ -134,6 +134,21 @@ function monthsBetween(fromKey, toKey) {
   return (ty - fy) * 12 + (tm - fm);
 }
 
+function monthKeysInRange(fromKey, toKey) {
+  if (!fromKey || !toKey) return [];
+  let [y, m] = fromKey.split("-").map(Number);
+  const [ty, tm] = toKey.split("-").map(Number);
+  const keys = [];
+  let guard = 0;
+  while ((y < ty || (y === ty && m <= tm)) && guard < 600) {
+    keys.push(`${y}-${String(m).padStart(2, "0")}`);
+    m++;
+    if (m > 12) { m = 1; y++; }
+    guard++;
+  }
+  return keys;
+}
+
 // Reaplica o dia de um lançamento recorrente ("date" no formato dd/mm) dentro do mês
 // visualizado, em vez de deixar preso pra sempre no mês em que foi criado.
 function projectDateToMonth(dateStr, monthKey) {
@@ -504,6 +519,23 @@ export default function App() {
       .filter(Boolean);
   }, [fixedExpenses, currentMonthKey]);
 
+  const activeInvestForMonth = useMemo(() => {
+    return investAllocations
+      .map((def) => {
+        const offset = monthsBetween(def.startMonth, currentMonthKey);
+        if (offset < 0) return null;
+        const status = def.paidMonths?.[currentMonthKey] || {};
+        return {
+          ...def,
+          paid: !!status.paid,
+          paymentDate: status.paymentDate || null,
+          deferred: !!status.deferred,
+          date: projectDateToMonth(def.date, currentMonthKey),
+        };
+      })
+      .filter(Boolean);
+  }, [investAllocations, currentMonthKey]);
+
   const totalIncome = useMemo(() => monthIncome.reduce((s, i) => s + i.amountCents, 0), [monthIncome]);
   const totalFixed = useMemo(() => activeFixedForMonth.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [activeFixedForMonth]);
   const totalVariable = useMemo(() => monthVariableExpenses.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [monthVariableExpenses]);
@@ -529,16 +561,16 @@ export default function App() {
       .map((e, idx) => ({ id: e.id, label: e.name, color: FIXED_ITEM_COLORS[idx % FIXED_ITEM_COLORS.length], value: e.amountCents }));
   }, [activeFixedForMonth]);
 
-  const allocatedTotal = useMemo(() => investAllocations.reduce((s, i) => s + i.amountCents, 0), [investAllocations]);
+  const allocatedTotal = useMemo(() => activeInvestForMonth.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [activeInvestForMonth]);
   const remainingToAllocate = investAmountCents - allocatedTotal;
 
   const investBreakdown = useMemo(() => {
     const byCat = {};
-    investAllocations.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + e.amountCents; });
+    activeInvestForMonth.filter((e) => !e.deferred).forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + e.amountCents; });
     return Object.entries(byCat)
       .map(([catId, value]) => ({ ...(INVEST_CATEGORY_PALETTE.find((c) => c.id === catId) || INVEST_CATEGORY_PALETTE[4]), value }))
       .sort((a, b) => b.value - a.value);
-  }, [investAllocations]);
+  }, [activeInvestForMonth]);
 
   const incomeUsageBreakdown = useMemo(() => {
     const byLabel = {};
@@ -563,10 +595,17 @@ export default function App() {
     return slices;
   }, [activeFixedForMonth, monthVariableExpenses, investAmountCents, totalIncome]);
 
-  const emergencyReserveCents = useMemo(
-    () => investAllocations.filter((a) => a.category === "reserva_emergencia").reduce((s, a) => s + a.amountCents, 0),
-    [investAllocations]
-  );
+  const emergencyReserveCents = useMemo(() => {
+    let total = 0;
+    investAllocations
+      .filter((def) => def.category === "reserva_emergencia")
+      .forEach((def) => {
+        monthKeysInRange(def.startMonth, currentMonthKey).forEach((mKey) => {
+          if (def.paidMonths?.[mKey]?.paid) total += def.amountCents;
+        });
+      });
+    return total;
+  }, [investAllocations, currentMonthKey]);
   const emergencyMonthsCoverage = totalFixed > 0 ? emergencyReserveCents / totalFixed : 0;
   const emergencyGoalMonths = 6;
 
@@ -642,10 +681,10 @@ export default function App() {
     ...monthIncome.map((r) => ({ ...r, kind: "receita" })),
     ...activeFixedForMonth.map((r) => ({ ...r, kind: "fixa" })),
     ...monthVariableExpenses.map((r) => ({ ...r, kind: "variavel" })),
-    ...investAllocations.map((r) => ({ ...r, kind: "investimento" })),
-  ], [monthIncome, activeFixedForMonth, monthVariableExpenses, investAllocations]);
+    ...activeInvestForMonth.map((r) => ({ ...r, kind: "investimento" })),
+  ], [monthIncome, activeFixedForMonth, monthVariableExpenses, activeInvestForMonth]);
 
-  const tableSource = isOverview ? overviewRows : isInvest ? investAllocations : rows;
+  const tableSource = isOverview ? overviewRows : isInvest ? activeInvestForMonth : rows;
   const tableRows = tableSource.filter((r) => r.name.toLowerCase().includes(search.toLowerCase()));
 
   const balanceLabel = isOverview
@@ -784,12 +823,20 @@ export default function App() {
         paidMonths,
       };
     } else if (addModalType === "investimento") {
+      const startMonth = editingId ? existingEntry.startMonth || currentMonthKey : currentMonthKey;
       const paid = formPaidStatus === "pago";
+      const existingPaidMonths = existingEntry.paidMonths || {};
+      const paidMonths = {
+        ...existingPaidMonths,
+        [currentMonthKey]: paid
+          ? { paid: true, paymentDate: existingPaidMonths[currentMonthKey]?.paymentDate || todayISO() }
+          : { paid: false, paymentDate: existingPaidMonths[currentMonthKey]?.paymentDate || null },
+      };
       payload = {
         ...entry,
         category: formCategory,
-        paid,
-        paymentDate: paid ? existingEntry.paymentDate || todayISO() : null,
+        startMonth,
+        paidMonths,
       };
     } else {
       const paid = formPaidStatus === "pago";
@@ -857,12 +904,16 @@ export default function App() {
       return;
     }
     if (kind === "investimento") {
-      const current = investAllocations.find((i) => i.id === id);
-      if (!current) return;
-      const nextPaid = !current.paid;
-      const nextPaymentDate = nextPaid ? todayISO() : current.paymentDate;
+      const def = investAllocations.find((i) => i.id === id);
+      if (!def) return;
+      const currentStatus = def.paidMonths?.[currentMonthKey] || {};
+      const nextPaid = !currentStatus.paid;
+      const nextPaidMonths = {
+        ...def.paidMonths,
+        [currentMonthKey]: { paid: nextPaid, paymentDate: nextPaid ? todayISO() : currentStatus.paymentDate || null },
+      };
       try {
-        const saved = await patchEntry("investimento", id, { paid: nextPaid, payment_date: nextPaymentDate });
+        const saved = await patchEntry("investimento", id, { paid_months: nextPaidMonths });
         setInvestAllocations((prev) => prev.map((i) => (i.id === id ? saved : i)));
       } catch (e) {
         console.error("Falha ao atualizar pagamento:", e);
@@ -920,6 +971,21 @@ export default function App() {
       try {
         const saved = await patchEntry("fixa", entryRow.id, { paid_months: nextPaidMonths });
         setFixedExpenses((prev) => prev.map((i) => (i.id === entryRow.id ? saved : i)));
+      } catch (e) {
+        console.error("Falha ao adiar lançamento:", e);
+      }
+      return;
+    }
+    if (kind === "investimento") {
+      const def = investAllocations.find((i) => i.id === entryRow.id);
+      if (!def) return;
+      const nextPaidMonths = {
+        ...def.paidMonths,
+        [currentMonthKey]: { ...(def.paidMonths?.[currentMonthKey] || {}), paid: false, deferred: true },
+      };
+      try {
+        const saved = await patchEntry("investimento", entryRow.id, { paid_months: nextPaidMonths });
+        setInvestAllocations((prev) => prev.map((i) => (i.id === entryRow.id ? saved : i)));
       } catch (e) {
         console.error("Falha ao adiar lançamento:", e);
       }
@@ -1277,7 +1343,7 @@ export default function App() {
                   Recebido
                 </button>
               )}
-              {showActions && (kind === "variavel" || kind === "fixa") && !r.deferred && !r.paid && (
+              {showActions && (kind === "variavel" || kind === "fixa" || kind === "investimento") && !r.deferred && !r.paid && (
                 <button
                   onClick={() => deferToNextMonth(kind, r)}
                   aria-label="Lançar para o mês seguinte"

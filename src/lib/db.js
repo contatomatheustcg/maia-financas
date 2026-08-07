@@ -98,8 +98,8 @@ function rowToInvest(row) {
     category: row.category,
     amountCents: row.amount_cents,
     date: row.date,
-    paid: !!row.paid,
-    paymentDate: row.payment_date,
+    startMonth: row.start_month,
+    paidMonths: row.paid_months || {},
   };
 }
 function investToRow(entry) {
@@ -108,8 +108,8 @@ function investToRow(entry) {
     category: entry.category,
     amount_cents: entry.amountCents,
     date: entry.date ?? null,
-    paid: !!entry.paid,
-    payment_date: entry.paymentDate ?? null,
+    start_month: entry.startMonth,
+    paid_months: entry.paidMonths || {},
   };
 }
 
