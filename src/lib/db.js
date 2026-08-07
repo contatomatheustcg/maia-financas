@@ -46,6 +46,7 @@ function rowToFixed(row) {
       : null,
     subscription: !!row.subscription,
     dueDay: row.due_day,
+    weekday: row.weekday,
     startMonth: row.start_month,
     paidMonths: row.paid_months || {},
   };
@@ -60,6 +61,7 @@ function fixedToRow(entry) {
     installment_total: entry.installment ? entry.installment.total : null,
     subscription: !!entry.subscription,
     due_day: entry.dueDay ?? null,
+    weekday: entry.weekday ?? null,
     start_month: entry.startMonth,
     paid_months: entry.paidMonths || {},
   };

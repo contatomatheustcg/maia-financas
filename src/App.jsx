@@ -83,6 +83,9 @@ const DEFAULT_FIXED_CATEGORIES = [
   { id: "outros", label: "Outros", color: "#B4638A" },
 ];
 
+const WEEKDAY_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const WEEKDAY_LABEL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
 const INVEST_CATEGORY_PALETTE = [
   { id: "renda_fixa", label: "Renda Fixa", color: "#0F9C8D" },
   { id: "acoes", label: "Ações", color: "#3D7FC9" },
@@ -382,6 +385,7 @@ export default function App() {
   const [formInstallmentCurrent, setFormInstallmentCurrent] = useState("1");
   const [formInstallmentTotal, setFormInstallmentTotal] = useState("2");
   const [formDueDay, setFormDueDay] = useState("");
+  const [formWeekday, setFormWeekday] = useState("");
   const [formPaymentDate, setFormPaymentDate] = useState("");
   const [formPaidStatus, setFormPaidStatus] = useState("aberto");
 
@@ -768,10 +772,13 @@ export default function App() {
       setFormAmountCents(rawExisting.amountCents);
       setFormCategory(rawExisting.category || defaultCategory);
       if (type === "fixa") {
-        setFormRecurrenceType(rawExisting.installment ? "parcelado" : rawExisting.subscription ? "assinatura" : "fixo");
+        setFormRecurrenceType(
+          rawExisting.weekday != null ? "semanal" : rawExisting.installment ? "parcelado" : rawExisting.subscription ? "assinatura" : "fixo"
+        );
         setFormInstallmentCurrent(rawExisting.installment ? String(rawExisting.installment.current) : "1");
         setFormInstallmentTotal(rawExisting.installment ? String(rawExisting.installment.total) : "2");
         setFormDueDay(rawExisting.dueDay ? String(rawExisting.dueDay) : "");
+        setFormWeekday(rawExisting.weekday != null ? String(rawExisting.weekday) : "");
         setFormPaymentDate(existing.paymentDate || "");
         setFormPaidStatus(existing.paid ? "pago" : "aberto");
       } else if (type === "variavel") {
@@ -797,6 +804,7 @@ export default function App() {
         setFormInstallmentCurrent("1");
         setFormInstallmentTotal("2");
         setFormDueDay(String(new Date().getDate()));
+        setFormWeekday("");
       }
     }
     setAddModalOpen(true);
@@ -826,6 +834,10 @@ export default function App() {
     }
     if (!formAmountCents || formAmountCents <= 0) {
       setFormError("Digite um valor maior que zero.");
+      return;
+    }
+    if (addModalType === "fixa" && formRecurrenceType === "semanal" && formWeekday === "") {
+      setFormError("Selecione o dia da semana.");
       return;
     }
     setFormError("");
@@ -858,7 +870,9 @@ export default function App() {
         ? { current: Math.max(1, parseInt(formInstallmentCurrent, 10) || 1), total: Math.max(1, parseInt(formInstallmentTotal, 10) || 1) }
         : null;
       const subscription = formRecurrenceType === "assinatura";
-      const dueDay = formDueDay ? Math.min(31, Math.max(1, parseInt(formDueDay, 10) || 0)) || null : null;
+      const isWeekly = formRecurrenceType === "semanal";
+      const dueDay = !isWeekly && formDueDay ? Math.min(31, Math.max(1, parseInt(formDueDay, 10) || 0)) || null : null;
+      const weekday = isWeekly && formWeekday !== "" ? parseInt(formWeekday, 10) : null;
       const startMonth = editingId ? existingEntry.startMonth || currentMonthKey : currentMonthKey;
       const paid = formPaidStatus === "pago";
       const existingPaidMonths = existingEntry.paidMonths || {};
@@ -874,6 +888,7 @@ export default function App() {
         installment,
         subscription,
         dueDay,
+        weekday,
         startMonth,
         paidMonths,
       };
@@ -1350,6 +1365,11 @@ export default function App() {
                     Assinatura · recorrente
                   </span>
                 )}
+                {r.weekday != null && (
+                  <span className="text-[10px] font-medium" style={{ color: COLORS.primary }}>
+                    Toda {WEEKDAY_LABEL[r.weekday]}
+                  </span>
+                )}
                 {r.dueDay && !r.paid && !r.deferred && (
                   <span className="text-[10px] font-medium block" style={{ color: dueColor(r.dueInfo) }}>
                     {dueLabel(r.dueInfo)}
@@ -1373,7 +1393,7 @@ export default function App() {
               {badgeLabel}
             </span>
           </td>
-          <td className="px-3 py-3 text-xs" style={{ color: COLORS.ink600 }}>{r.date || "—"}</td>
+          <td className="px-3 py-3 text-xs" style={{ color: COLORS.ink600 }}>{r.weekday != null ? WEEKDAY_SHORT[r.weekday] : (r.date || "—")}</td>
           <td className="px-3 py-3 text-xs font-semibold tabular-nums" style={{ color: amountColor }}>
             {hideAmounts ? "••••" : `${amountSign}${brl(r.amountCents)}`}
           </td>
@@ -2655,7 +2675,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              {addModalType === "fixa" && (
+              {addModalType === "fixa" && formRecurrenceType !== "semanal" && (
                 <div>
                   <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Dia do vencimento</label>
                   <input
@@ -2749,11 +2769,12 @@ export default function App() {
               </div>
               <div>
                 <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Tipo</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {[
                     { id: "fixo", label: "Fixo" },
                     { id: "parcelado", label: "Parcelado" },
                     { id: "assinatura", label: "Assinatura" },
+                    { id: "semanal", label: "Semanal" },
                   ].map((t) => (
                     <button
                       key={t.id}
@@ -2796,6 +2817,24 @@ export default function App() {
                 <p className="text-[11px]" style={{ color: COLORS.ink400 }}>
                   Vai continuar cobrando todo mês até você marcar como cancelada.
                 </p>
+              )}
+              {formRecurrenceType === "semanal" && (
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Dia da semana</label>
+                  <div className="grid grid-cols-7 gap-1">
+                    {WEEKDAY_SHORT.map((label, idx) => (
+                      <button
+                        key={label}
+                        onClick={() => setFormWeekday(String(idx))}
+                        className="text-[10px] font-medium py-2 rounded-lg"
+                        style={formWeekday === String(idx) ? { background: COLORS.ink900, color: "#fff" } : { background: COLORS.page, color: COLORS.ink600 }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] mt-1" style={{ color: COLORS.ink400 }}>Ela se repete toda semana nesse dia, sem uma data fixa no mês.</p>
+                </div>
               )}
             </>
           )}
