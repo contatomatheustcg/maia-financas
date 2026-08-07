@@ -728,6 +728,7 @@ export default function App() {
         setFormIncomeRecurring(!!existing.recurring);
       } else if (type === "investimento") {
         setFormPaidStatus(existing.paid ? "pago" : "aberto");
+        setFormPaymentDate(existing.paymentDate || "");
       }
     } else {
       setEditingId(null);
@@ -777,7 +778,7 @@ export default function App() {
     const existingEntry = editingId
       ? (income.find((i) => i.id === editingId) || fixedExpenses.find((i) => i.id === editingId) || variableExpenses.find((i) => i.id === editingId) || investAllocations.find((i) => i.id === editingId) || {})
       : {};
-    const showsDatePicker = addModalType === "receita" || addModalType === "fixa" || addModalType === "variavel";
+    const showsDatePicker = addModalType === "receita" || addModalType === "fixa" || addModalType === "variavel" || addModalType === "investimento";
     const pickedDate = showsDatePicker && formPaymentDate ? formatDateShort(formPaymentDate) : null;
     const entry = { name: formName.trim(), amountCents: formAmountCents, date: pickedDate || existingEntry.date || todayShort() };
     let payload;
@@ -829,8 +830,8 @@ export default function App() {
       const paidMonths = {
         ...existingPaidMonths,
         [currentMonthKey]: paid
-          ? { paid: true, paymentDate: existingPaidMonths[currentMonthKey]?.paymentDate || todayISO() }
-          : { paid: false, paymentDate: existingPaidMonths[currentMonthKey]?.paymentDate || null },
+          ? { paid: true, paymentDate: formPaymentDate || existingPaidMonths[currentMonthKey]?.paymentDate || todayISO() }
+          : { paid: false, paymentDate: formPaymentDate || existingPaidMonths[currentMonthKey]?.paymentDate || null },
       };
       payload = {
         ...entry,
@@ -2555,12 +2556,12 @@ export default function App() {
         subtitle={addModalType === "fixa" ? "Vale deste mês em diante." : addModalType === "investimento" ? "Registre onde esse valor foi investido." : undefined}
       >
         <div className="space-y-3 mb-5">
-          <div className={addModalType === "investimento" ? "" : "grid grid-cols-1 sm:grid-cols-2 gap-3"}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1" style={{ color: COLORS.ink400 }}>Valor</label>
               <CurrencyInput valueCents={formAmountCents} onChange={setFormAmountCents} autoFocus />
             </div>
-            {(addModalType === "receita" || addModalType === "fixa" || addModalType === "variavel") && (
+            {(addModalType === "receita" || addModalType === "fixa" || addModalType === "variavel" || addModalType === "investimento") && (
               <div>
                 <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1 whitespace-nowrap" style={{ color: COLORS.ink400 }}>
                   {addModalType === "receita" ? "Recebimento (opcional)" : "Pagamento (opcional)"}
