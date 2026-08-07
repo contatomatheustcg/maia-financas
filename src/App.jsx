@@ -14,7 +14,7 @@ import {
 import {
   Eye, EyeOff, Bell, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, X,
   Search, TrendingUp, TrendingDown, Target, PieChart as PieIcon, Diamond,
-  Mail, Lock, LogOut, Shield, Calendar, RefreshCw, ArrowUpRight, ArrowDownRight, Save, Sparkles,
+  Mail, Lock, LogOut, Shield, Calendar, RefreshCw, ArrowUpRight, ArrowDownRight, Sparkles,
   Check, SkipForward, CalendarClock, Settings,
 } from "lucide-react";
 import { supabase } from "./lib/supabaseClient";
@@ -337,6 +337,8 @@ export default function App() {
   const [monthOffset, setMonthOffset] = useState(0);
   const currentMonthKey = monthKeyFromOffset(monthOffset);
   const currentMonthLabel = monthLabelFromOffset(monthOffset);
+  const previousMonthKey = monthKeyFromOffset(monthOffset - 1);
+  const previousMonthLabel = monthLabelFromOffset(monthOffset - 1);
   const [search, setSearch] = useState("");
 
   const [income, setIncome] = useState([]);
@@ -358,7 +360,6 @@ export default function App() {
   const [categoryEditingId, setCategoryEditingId] = useState(null);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryColor, setNewCategoryColor] = useState("#6C5CE0");
-  const [previousMonthSnapshot, setPreviousMonthSnapshot] = useState(null);
   const [projectionMonths, setProjectionMonths] = useState("12");
   const [projectionRate, setProjectionRate] = useState("0.8");
 
@@ -676,19 +677,48 @@ export default function App() {
     return { rows, yearly, totalMonths, final };
   }, [calcInitialCents, calcMonthlyCents, calcRateValue, calcRatePeriod, calcPeriodValue, calcPeriodUnit]);
 
-  function saveMonthSnapshot() {
-    setPreviousMonthSnapshot({ label: currentMonthLabel, totalIncome, totalExpenses, saldoCents });
-  }
+  const previousMonthTotals = useMemo(() => {
+    const prevIncome = income.filter((inc) =>
+      inc.recurring ? monthsBetween(inc.startMonth, previousMonthKey) >= 0 : inc.referenceMonth === previousMonthKey
+    );
+    const prevTotalIncome = prevIncome.reduce((s, i) => s + i.amountCents, 0);
+
+    const prevFixed = fixedExpenses.filter((def) => {
+      const offset = monthsBetween(def.startMonth, previousMonthKey);
+      if (offset < 0) return false;
+      if (def.installment && def.installment.current + offset > def.installment.total) return false;
+      return !def.paidMonths?.[previousMonthKey]?.deferred;
+    });
+    const prevTotalFixed = prevFixed.reduce((s, i) => s + i.amountCents, 0);
+
+    const prevVariable = variableExpenses.filter((e) => e.referenceMonth === previousMonthKey && !e.deferred);
+    const prevTotalVariable = prevVariable.reduce((s, i) => s + i.amountCents, 0);
+
+    const prevInvest = investAllocations.filter((def) => {
+      const offset = monthsBetween(def.startMonth, previousMonthKey);
+      if (offset < 0) return false;
+      return !def.paidMonths?.[previousMonthKey]?.deferred;
+    });
+    const prevAllocatedTotal = prevInvest.reduce((s, i) => s + i.amountCents, 0);
+
+    const prevTotalExpenses = prevTotalFixed + prevTotalVariable;
+    return {
+      hasData: prevIncome.length > 0 || prevFixed.length > 0 || prevVariable.length > 0,
+      totalIncome: prevTotalIncome,
+      totalExpenses: prevTotalExpenses,
+      saldoCents: prevTotalIncome - prevAllocatedTotal - prevTotalExpenses,
+    };
+  }, [income, fixedExpenses, variableExpenses, investAllocations, previousMonthKey]);
 
   const monthComparison = useMemo(() => {
-    if (!previousMonthSnapshot) return null;
+    if (!previousMonthTotals.hasData) return null;
     const pct = (curr, prev) => (prev === 0 ? null : Math.round(((curr - prev) / Math.abs(prev)) * 100));
     return {
-      incomeDelta: pct(totalIncome, previousMonthSnapshot.totalIncome),
-      expenseDelta: pct(totalExpenses, previousMonthSnapshot.totalExpenses),
-      saldoDelta: pct(saldoCents, previousMonthSnapshot.saldoCents),
+      incomeDelta: pct(totalIncome, previousMonthTotals.totalIncome),
+      expenseDelta: pct(totalExpenses, previousMonthTotals.totalExpenses),
+      saldoDelta: pct(saldoCents, previousMonthTotals.saldoCents),
     };
-  }, [previousMonthSnapshot, totalIncome, totalExpenses, saldoCents]);
+  }, [previousMonthTotals, totalIncome, totalExpenses, saldoCents]);
 
   const isOverview = section === "overview";
   const isBudget = section === "budget";
@@ -1959,21 +1989,12 @@ export default function App() {
                 <RefreshCw size={13} color={COLORS.ink400} />
               </div>
               {!monthComparison ? (
-                <>
-                  <p className="text-[11px] mb-3" style={{ color: COLORS.ink400 }}>
-                    Salve os números deste mês como referência pra comparar com o próximo.
-                  </p>
-                  <button
-                    onClick={saveMonthSnapshot}
-                    className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold py-2.5 rounded-xl"
-                    style={{ background: COLORS.page, color: COLORS.ink900, border: `1px solid ${COLORS.cardBorder}` }}
-                  >
-                    <Save size={13} /> Salvar este mês como referência
-                  </button>
-                </>
+                <p className="text-[11px]" style={{ color: COLORS.ink400 }}>
+                  Sem lançamentos em {previousMonthLabel} pra comparar.
+                </p>
               ) : (
                 <>
-                  <p className="text-[11px] mb-3" style={{ color: COLORS.ink400 }}>Referência: {previousMonthSnapshot.label}</p>
+                  <p className="text-[11px] mb-3" style={{ color: COLORS.ink400 }}>Comparado a {previousMonthLabel}</p>
                   <div className="space-y-2.5">
                     {[
                       { label: "Receita", delta: monthComparison.incomeDelta, goodUp: true },
@@ -1994,13 +2015,6 @@ export default function App() {
                       );
                     })}
                   </div>
-                  <button
-                    onClick={saveMonthSnapshot}
-                    className="w-full text-[11px] font-medium py-2 rounded-lg mt-3"
-                    style={{ color: COLORS.primary }}
-                  >
-                    Atualizar referência para este mês
-                  </button>
                 </>
               )}
             </div>
