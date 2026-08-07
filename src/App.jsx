@@ -546,13 +546,17 @@ export default function App() {
       .filter(Boolean);
   }, [investAllocations, currentMonthKey]);
 
+  const allocatedTotal = useMemo(() => activeInvestForMonth.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [activeInvestForMonth]);
+
   const totalIncome = useMemo(() => monthIncome.reduce((s, i) => s + i.amountCents, 0), [monthIncome]);
   const totalFixed = useMemo(() => activeFixedForMonth.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [activeFixedForMonth]);
   const totalVariable = useMemo(() => monthVariableExpenses.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [monthVariableExpenses]);
   const totalExpenses = totalFixed + totalVariable;
   const investPercent = resolveInvestPercentForMonth(investPercentByMonth, currentMonthKey);
   const investAmountCents = Math.round((totalIncome * investPercent) / 100);
-  const saldoCents = totalIncome - investAmountCents - totalExpenses;
+  // Saldo desconta o que de fato foi/está alocado em investimentos este mês (aportes
+  // lançados), não o alvo de % — dinheiro alocado é dinheiro que sai, igual qualquer despesa.
+  const saldoCents = totalIncome - allocatedTotal - totalExpenses;
   const expensePercentOfIncome = totalIncome > 0 ? Math.round((totalExpenses / totalIncome) * 100) : 0;
   const healthStatus = getHealthStatus(expensePercentOfIncome, saldoCents);
 
@@ -572,7 +576,6 @@ export default function App() {
       .map((e, idx) => ({ id: e.id, label: e.name, color: FIXED_ITEM_COLORS[idx % FIXED_ITEM_COLORS.length], value: e.amountCents }));
   }, [activeFixedForMonth]);
 
-  const allocatedTotal = useMemo(() => activeInvestForMonth.filter((i) => !i.deferred).reduce((s, i) => s + i.amountCents, 0), [activeInvestForMonth]);
   const remainingToAllocate = investAmountCents - allocatedTotal;
 
   const investBreakdown = useMemo(() => {
@@ -598,13 +601,23 @@ export default function App() {
       const cat = variableCategories.find((c) => c.id === e.category) || variableCategories.find((c) => c.id === "outros") || variableCategories[variableCategories.length - 1];
       addSlice(cat.label, e.amountCents, cat.color);
     });
-    addSlice("Investimento", investAmountCents, COLORS.invest);
+    addSlice("Investimento", allocatedTotal, COLORS.invest);
     const slices = Object.values(byLabel).sort((a, b) => b.value - a.value);
     const used = slices.reduce((s, x) => s + x.value, 0);
     const free = totalIncome - used;
     if (free > 0) slices.push({ id: "livre", label: "Livre", value: free, color: COLORS.income });
     return slices;
-  }, [activeFixedForMonth, monthVariableExpenses, investAmountCents, totalIncome]);
+  }, [activeFixedForMonth, monthVariableExpenses, allocatedTotal, totalIncome]);
+
+  const totalInvestedAllTime = useMemo(() => {
+    let total = 0;
+    investAllocations.forEach((def) => {
+      monthKeysInRange(def.startMonth, currentMonthKey).forEach((mKey) => {
+        if (def.paidMonths?.[mKey]?.paid) total += def.amountCents;
+      });
+    });
+    return total;
+  }, [investAllocations, currentMonthKey]);
 
   const emergencyReserveCents = useMemo(() => {
     let total = 0;
@@ -1833,6 +1846,21 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            {isOverview && (
+            <div className="rounded-2xl p-5" style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}` }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium" style={{ color: COLORS.ink600 }}>Saldo investido</span>
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: COLORS.investSoft }}>
+                  <Sparkles size={15} color={COLORS.invest} />
+                </div>
+              </div>
+              <div className="text-2xl font-bold tabular-nums mb-1" style={{ color: COLORS.invest }}>
+                {hideAmounts ? "R$ ••••" : brl(totalInvestedAllTime)}
+              </div>
+              <p className="text-[11px]" style={{ color: COLORS.ink400 }}>Acumulado de todos os aportes pagos até {currentMonthLabel}.</p>
+            </div>
+            )}
 
             {!isReceitaTab && !isFixaTab && !isVariavelTab && (
             <div className="rounded-2xl p-5" style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}` }}>
